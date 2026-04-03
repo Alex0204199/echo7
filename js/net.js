@@ -459,7 +459,9 @@ const Net = {
         }
         break;
       case 'combat_help_request': {
-        if (msg.nodeId === G?.world?.currentNodeId && !G.combatState) {
+        // Host relays to all clients
+        if (this.mode === 'HOST' && senderId !== Net.localId) Net.broadcast(msg);
+        if (msg.nodeId === G?.world?.currentNodeId && !G.combatState && msg.fromId !== Net.localId) {
           const isEn = LANG?.current === 'en';
           const z = msg.zombie;
           let chHtml = `<div style="text-align:center;padding:8px">`;
@@ -1362,6 +1364,7 @@ Bus.on('player:move', (data) => {
 
 function _checkFollow() {
   if (!_followTarget || !G) return;
+  if (G.combatState) return; // don't follow during combat
   const leader = Net.players[_followTarget];
   if (!leader?.nodeId) return;
 
@@ -1431,13 +1434,14 @@ function showMarkerMenu() {
 function requestCombatHelp() {
   if (!G?.combatState?.zombie || Net.mode === 'OFFLINE') return;
   const z = G.combatState.zombie;
-  // Send current HP (not original) to party/nearby
   const msg = { t:'e', e:'combat_help_request',
     nodeId: G.world.currentNodeId, roomIdx: G.world.currentRoom,
     fromId: Net.localId, fromName: G?.characterName || 'Player',
     zombie: { name:z.name, hp:z.hp, currentHp:z.currentHp, dmg:z.dmg, type:z.type }
   };
-  Net.broadcast(msg);
+  // Works for both HOST and CLIENT
+  if (Net.mode === 'HOST') Net.broadcast(msg);
+  else Net.send(null, msg); // goes to host who will relay
   addLog('📡 Запрос помощи отправлен!', 'info');
 }
 

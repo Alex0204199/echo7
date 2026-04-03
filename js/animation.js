@@ -990,7 +990,12 @@ function _animLoopInner() {
   // ══════════════════════════════════════
   let _rpIdx = 0;
   Object.entries(sceneData.remotePlayers).forEach(([rpId, rp]) => {
-    if (!rp || rp.nodeId !== G?.world?.currentNodeId || rp.roomIdx !== G?.world?.currentRoom) return;
+    if (!rp || rp.nodeId !== G?.world?.currentNodeId) return;
+    const sameRoom = rp.roomIdx === G?.world?.currentRoom;
+    const isPartyMember = typeof isInParty === 'function' && isInParty(rpId);
+    // Show if same room, OR party member in same building (dimmed)
+    if (!sameRoom && !isPartyMember) return;
+    const _rpAlphaBase = sameRoom ? 1.0 : 0.3; // dimmed if different room
     _rpIdx++;
     // Small offset so players don't overlap when at same position
     const offsetAngle = (_rpIdx * 2.1) % (Math.PI * 2);
@@ -1001,8 +1006,8 @@ function _animLoopInner() {
     if (rpSX < -50 || rpSX > w + 50 || rpSY < -50 || rpSY > h + 50) return;
 
     ctx.save();
-    // Glow
-    ctx.globalAlpha = 0.15;
+    // Glow (dimmed for different-room party members)
+    ctx.globalAlpha = 0.15 * _rpAlphaBase;
     const rpGrad = ctx.createRadialGradient(rpSX, rpSY, 0, rpSX, rpSY, 25);
     rpGrad.addColorStop(0, 'rgba(0,229,255,0.2)');
     rpGrad.addColorStop(1, 'transparent');
@@ -1010,14 +1015,14 @@ function _animLoopInner() {
     ctx.beginPath(); ctx.arc(rpSX, rpSY, 25, 0, Math.PI*2); ctx.fill();
 
     // Ring
-    ctx.globalAlpha = 0.4;
-    ctx.strokeStyle = '#00E5FF';
+    ctx.globalAlpha = 0.4 * _rpAlphaBase;
+    ctx.strokeStyle = isPartyMember && !sameRoom ? '#22aa44' : '#00E5FF';
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(rpSX, rpSY, 8, 0, Math.PI*2); ctx.stroke();
 
     // Core
-    ctx.globalAlpha = 0.85;
-    ctx.fillStyle = '#00E5FF';
+    ctx.globalAlpha = 0.85 * _rpAlphaBase;
+    ctx.fillStyle = isPartyMember && !sameRoom ? '#22aa44' : '#00E5FF';
     ctx.shadowColor = '#00E5FF'; ctx.shadowBlur = 6;
     ctx.beginPath(); ctx.arc(rpSX, rpSY, 4, 0, Math.PI*2); ctx.fill();
     ctx.shadowBlur = 0;
@@ -1256,6 +1261,26 @@ function _animLoopInner() {
     else if (G.player?.stealthMode) _pStatus = '🥷';
     else if (G.world.currentRoute && !G.world.currentRoute.paused) _pStatus = '🏃';
     Net.sendPosition(sceneData.playerX / _cw, sceneData.playerY / _ch, sceneData.playerDir, G.world.currentNodeId, G.world.currentRoom, _pStatus);
+
+    // WASD follow: if following someone in the same room, move towards them
+    if (typeof _followTarget !== 'undefined' && _followTarget && !G.combatState) {
+      const _leader = sceneData.remotePlayers[_followTarget];
+      if (_leader && _leader.nodeId === G.world.currentNodeId && _leader.roomIdx === G.world.currentRoom) {
+        // Move towards leader with 15px offset behind
+        const dx = _leader.x - sceneData.playerX;
+        const dy = _leader.y - sceneData.playerY;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 18) { // don't get too close
+          const speed = 1.2; // follow speed
+          sceneData.playerX += (dx / dist) * Math.min(speed, dist - 15);
+          sceneData.playerY += (dy / dist) * Math.min(speed, dist - 15);
+          // Update direction to face leader
+          if (Math.abs(dx) > Math.abs(dy)) sceneData.playerDir = dx > 0 ? 1 : 3;
+          else sceneData.playerDir = dy > 0 ? 2 : 0;
+        }
+      }
+    }
+
     // Lerp remote player positions for smooth rendering
     Object.values(sceneData.remotePlayers).forEach(rp => {
       if (rp.targetX !== undefined) {

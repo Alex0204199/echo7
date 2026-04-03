@@ -3475,6 +3475,8 @@ function travelRegion(ri) {
 // ── COMBAT ──
 function startCombat(zombie, room) {
   Bus.emit('combat:start', { nodeId: G.world.currentNodeId, roomIdx: G.world.currentRoom });
+  // Cancel following when entering combat
+  if (typeof _followTarget !== 'undefined' && _followTarget) { if (typeof stopFollow === 'function') stopFollow(); }
   // Broadcast combat to other players in same location
   if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
     Net.broadcast({ t:'e', e:'combat_started', nodeId:G.world.currentNodeId, roomIdx:G.world.currentRoom, zombie:{ name:zombie.name, hp:zombie.hp, currentHp:zombie.currentHp, dmg:zombie.dmg, type:zombie.type } });
