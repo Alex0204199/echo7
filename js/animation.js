@@ -2,7 +2,12 @@
 // ═══════════════════════════════════════════
 
 function animLoop() {
-  if (!canvas || !ctx) { animId = requestAnimationFrame(animLoop); return; }
+  animId = requestAnimationFrame(animLoop);
+  if (!canvas || !ctx) return;
+  try { _animLoopInner(); } catch(e) { console.error('[ANIM] Error:', e.message, e.stack?.split('\n')[1]); }
+}
+
+function _animLoopInner() {
   const dpr = window.devicePixelRatio;
   const w = canvas.width / dpr;
   const h = canvas.height / dpr;
@@ -1241,8 +1246,6 @@ function animLoop() {
       }
     });
   }
-
-  animId = requestAnimationFrame(animLoop);
 }
 
 // ═══════════════════════════════════════════
