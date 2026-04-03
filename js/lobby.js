@@ -25,6 +25,12 @@ function showHostLobby() {
   html += `<div id="lobby-players"></div>`;
   html += `</div>`;
 
+  // Settings
+  html += `<div style="display:flex;gap:8px;margin-bottom:10px;font-size:10px">`;
+  html += `<label style="display:flex;align-items:center;gap:4px;color:var(--text-dim);cursor:pointer"><input type="checkbox" id="pvp-toggle" ${G?.mpPvP?'checked':''} onchange="if(G)G.mpPvP=this.checked"> PvP</label>`;
+  html += `<label style="display:flex;align-items:center;gap:4px;color:var(--text-dim)"><span>${isEn?'Max players':'Макс игроков'}:</span><select id="max-players" style="background:#111;color:var(--green);border:1px solid var(--border);font-family:monospace;font-size:10px"><option>5</option><option>10</option><option selected>20</option></select></label>`;
+  html += `</div>`;
+
   // Buttons
   html += `<div style="display:flex;gap:6px">`;
   html += `<button class="act-btn" onclick="lobbyStartGame()" style="flex:2;padding:10px;border-color:var(--green);color:var(--green)">${isEn ? 'START GAME' : 'НАЧАТЬ ИГРУ'}</button>`;

@@ -3683,17 +3683,28 @@ function showCombatUI() {
       <div style="color:var(--text-dim);font-size:10px;display:flex;align-items:center;gap:4px">${otherWId ? itemIconHtml(otherWId,16) : ''}Слот ${otherSlot}: ${otherW}</div>
     </div>
     <div class="encounter-actions">
-      <button class="act-btn danger" onclick="combatAttack()">${uiIconHtml('combat_attack',18)} Атаковать</button>
+      <button class="act-btn danger" id="combat-atk-btn" onclick="combatAttack()">${uiIconHtml('combat_attack',18)} Атаковать</button>
       <button class="act-btn" onclick="switchWeaponSlot()">${uiIconHtml('combat_switch',18)} Сменить (${otherW})</button>
       <button class="act-btn" onclick="combatFlee()">${uiIconHtml('combat_flee',18)} Бежать</button>
       ${G.player.skills.stealth >= 5 && G.player.moodles.fatigue < 70 ? `<button class="act-btn stealth-on" onclick="combatStealth()">${uiIconHtml('combat_stealth',18)} Бесшумное устранение</button>` : ''}
       ${hasItem('rock') || hasItem('can_empty') ? `<button class="act-btn" onclick="combatDistract()">${uiIconHtml('combat_distract',18)} Отвлечь</button>` : ''}
-    </div>`;
+    </div>
+    <div id="combat-cooldown" style="height:3px;background:rgba(255,34,68,.15);margin-top:4px;border-radius:2px;overflow:hidden"><div id="combat-cd-fill" style="height:100%;width:0%;background:var(--red);transition:width 0.1s"></div></div>`;
   openModal('БОЙ', html);
   document.getElementById('modal-close').style.display = 'none';
 }
 
 function combatAttack() {
+  // Cooldown check (1.5s between attacks)
+  const now = Date.now();
+  if (G.combatState._lastAttack && now - G.combatState._lastAttack < 1500) return;
+  G.combatState._lastAttack = now;
+  // Disable button + show cooldown bar
+  const atkBtn = document.getElementById('combat-atk-btn');
+  const cdFill = document.getElementById('combat-cd-fill');
+  if (atkBtn) { atkBtn.disabled = true; setTimeout(() => { if (atkBtn) atkBtn.disabled = false; }, 1500); }
+  if (cdFill) { cdFill.style.width = '100%'; setTimeout(() => { if (cdFill) cdFill.style.transition = 'width 1.4s linear'; cdFill.style.width = '0%'; setTimeout(() => { if (cdFill) cdFill.style.transition = 'width 0.1s'; }, 1500); }, 50); }
+
   Bus.emit('combat:action', { action: 'attack' });
   const z = G.combatState.zombie;
   const w = getEquippedWeapon();

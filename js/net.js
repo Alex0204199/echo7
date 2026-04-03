@@ -148,6 +148,13 @@ const Net = {
         addLog(`📡 ${msg.player.name} присоединился`, 'success');
         Bus.emit('net:player_join', msg);
         break;
+      case 'emote':
+        if (msg.id && msg.id !== this.localId && sceneData.remotePlayers[msg.id]) {
+          sceneData.remotePlayers[msg.id].emote = msg.emote;
+          sceneData.remotePlayers[msg.id].emoteTime = Date.now();
+        }
+        if (this.mode === 'HOST') this.broadcast(msg);
+        break;
       case 'player_leave':
         delete this.players[msg.id];
         delete sceneData.remotePlayers[msg.id];
@@ -284,6 +291,15 @@ const Net = {
       case 'node_searched':
         if (G?.world?.nodes?.[msg.nodeId]) G.world.nodes[msg.nodeId].searched = true;
         break;
+      case 'trade_request':
+        if (msg.targetId && msg.targetId !== Net.localId && Net.mode === 'HOST') {
+          // Host relays to target
+          Net.send(msg.targetId, { t:'e', e:'trade_request', fromId: senderId, fromName: msg.fromName });
+        } else if (!msg.targetId || msg.fromId) {
+          // This is for us
+          showTradeRequest(msg.fromId);
+        }
+        break;
       default:
         Bus.emit('net:event', { senderId, event: msg.e, data: msg });
     }
@@ -364,6 +380,83 @@ const Net = {
 
   playerCount() { return Object.keys(this.players).length; }
 };
+
+// ── Emotes system ──
+const EMOTES = [
+  { id: 'wave', icon: '👋', label: 'Привет' },
+  { id: 'help', icon: '🆘', label: 'Помощь' },
+  { id: 'thumbsup', icon: '👍', label: 'Класс' },
+  { id: 'follow', icon: '👉', label: 'За мной' },
+  { id: 'danger', icon: '⚠️', label: 'Опасность' },
+  { id: 'stop', icon: '✋', label: 'Стой' },
+  { id: 'loot', icon: '💰', label: 'Лут тут' },
+  { id: 'thanks', icon: '🙏', label: 'Спасибо' },
+];
+
+function sendEmote(emoteId) {
+  const emote = EMOTES.find(e => e.id === emoteId);
+  if (!emote || Net.mode === 'OFFLINE') return;
+  // Show locally
+  sceneData.localEmote = emote.icon;
+  sceneData.localEmoteTime = Date.now();
+  // Send to others
+  const msg = { t: 'emote', id: Net.localId, emote: emote.icon };
+  if (Net.mode === 'HOST') Net.broadcast(msg);
+  else Net.send(null, msg);
+  // Close menu
+  const menu = document.getElementById('emote-menu');
+  if (menu) menu.remove();
+}
+
+function toggleEmoteMenu() {
+  let menu = document.getElementById('emote-menu');
+  if (menu) { menu.remove(); return; }
+  menu = document.createElement('div');
+  menu.id = 'emote-menu';
+  menu.style.cssText = 'position:fixed;bottom:110px;left:50%;transform:translateX(-50%);z-index:2000;display:flex;flex-wrap:wrap;gap:4px;justify-content:center;max-width:320px;background:rgba(0,10,0,.95);border:1px solid var(--cyan);padding:8px;border-radius:8px';
+  EMOTES.forEach(e => {
+    menu.innerHTML += `<button onclick="sendEmote('${e.id}')" style="padding:6px 10px;background:rgba(0,229,255,.05);border:1px solid rgba(0,229,255,.2);border-radius:4px;color:var(--text);font-family:monospace;font-size:12px;cursor:pointer" title="${e.label}">${e.icon} ${e.label}</button>`;
+  });
+  document.body.appendChild(menu);
+  // Auto-close after 5s
+  setTimeout(() => { const m = document.getElementById('emote-menu'); if (m) m.remove(); }, 5000);
+}
+
+// ── Player Trading ──
+function showTradeRequest(fromId) {
+  const fromName = Net.players[fromId]?.name || fromId;
+  const isEn = LANG?.current === 'en';
+  let html = `<div style="text-align:center;padding:10px">`;
+  html += `<div style="font-size:14px;color:var(--cyan);margin-bottom:8px">${fromName} ${isEn ? 'wants to trade' : 'предлагает обмен'}</div>`;
+  html += `<div style="display:flex;gap:8px;justify-content:center">`;
+  html += `<button class="act-btn" onclick="acceptTrade('${fromId}')" style="flex:1;padding:10px;border-color:var(--green);color:var(--green)">${isEn ? 'Accept' : 'Принять'}</button>`;
+  html += `<button class="act-btn" onclick="declineTrade('${fromId}')" style="flex:1;padding:10px;border-color:var(--red);color:var(--red)">${isEn ? 'Decline' : 'Отклонить'}</button>`;
+  html += `</div></div>`;
+  openModal('🤝 ' + (isEn ? 'Trade' : 'Обмен'), html);
+}
+
+function initiateTrade() {
+  // Find nearby player (same node)
+  const myNode = G?.world?.currentNodeId;
+  const nearby = Object.entries(Net.players).find(([id, p]) => id !== Net.localId && p.nodeId === myNode);
+  if (!nearby) { addLog('Нет игроков рядом для обмена.', 'warning'); return; }
+  const [targetId, targetInfo] = nearby;
+  addLog(`📡 Запрос обмена с ${targetInfo.name}...`, 'info');
+  const msg = { t: 'e', e: 'trade_request', fromId: Net.localId, fromName: G?.characterName || 'Player' };
+  if (Net.mode === 'HOST') Net.send(targetId, msg);
+  else Net.send(null, { ...msg, targetId });
+}
+
+function acceptTrade(fromId) {
+  closeModal();
+  addLog('🤝 Обмен принят! (функция в разработке)', 'success');
+  // TODO: open trade UI with both inventories
+}
+
+function declineTrade(fromId) {
+  closeModal();
+  addLog('Обмен отклонён.', 'info');
+}
 
 // ── Wire Bus events to network ──
 Bus.on('net:host_disconnected', () => {
