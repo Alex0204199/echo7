@@ -458,6 +458,22 @@ const Net = {
           addLog(`📡 Убежище обновлено`, 'info');
         }
         break;
+      case 'combat_help_request': {
+        if (msg.nodeId === G?.world?.currentNodeId && !G.combatState) {
+          const isEn = LANG?.current === 'en';
+          const z = msg.zombie;
+          let chHtml = `<div style="text-align:center;padding:8px">`;
+          chHtml += `<div style="color:var(--cyan);font-size:11px;margin-bottom:4px">${msg.fromName} ${isEn?'requests help!':'просит помощи!'}</div>`;
+          chHtml += `<div style="color:var(--red);font-size:16px;margin-bottom:4px">⚔ ${z.name}</div>`;
+          chHtml += `<div style="color:var(--text-dim);font-size:10px;margin-bottom:8px">HP: ${z.currentHp}/${z.hp}</div>`;
+          chHtml += `<div style="display:flex;gap:6px">`;
+          chHtml += `<button class="act-btn danger" onclick="_joinCombatWithHP(${z.currentHp},${z.hp},'${z.name}',${z.dmg},'${z.type||'normal'}')" style="flex:2;padding:10px">⚔ ${isEn?'HELP':'ПОМОЧЬ'}</button>`;
+          chHtml += `<button class="act-btn" onclick="closeModal()" style="flex:1;padding:10px">${isEn?'No':'Нет'}</button>`;
+          chHtml += `</div></div>`;
+          openModal('📡 ' + (isEn?'Help':'Помощь'), chHtml);
+        }
+        break;
+      }
       case 'combat_started': {
         // Another player started combat at same location — offer to assist
         if (msg.nodeId === G?.world?.currentNodeId) {
@@ -575,6 +591,14 @@ const Net = {
         addLog(`👣 ${faName} разрешил следование!`, 'success');
         break;
       }
+      case 'follow_stopped':
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); break; }
+        if (_follower === msg.fromId) { _follower = null; addLog(`👣 Игрок перестал следовать за вами`, 'info'); }
+        break;
+      case 'follow_kicked':
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); break; }
+        if (_followTarget === msg.fromId) { _followTarget = null; addLog(`👣 Лидер отменил следование`, 'info'); }
+        break;
       case 'introduce':
         if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); }
         else { _handleIntroduce(msg); }
@@ -1307,7 +1331,22 @@ function stopFollow() {
   if (_followTarget) {
     const name = Net.players[_followTarget]?.name || '???';
     addLog(`👣 Перестал следовать за ${name}`, 'info');
+    // Notify leader
+    const msg = { t:'e', e:'follow_stopped', fromId:Net.localId, targetId:_followTarget };
+    if (Net.mode === 'HOST') Net.send(_followTarget, msg);
+    else Net.send(null, msg);
     _followTarget = null;
+  }
+}
+
+function kickFollower() {
+  if (_follower) {
+    const name = Net.players[_follower]?.name || '???';
+    addLog(`👣 ${name} больше не следует за вами`, 'info');
+    const msg = { t:'e', e:'follow_kicked', fromId:Net.localId, targetId:_follower };
+    if (Net.mode === 'HOST') Net.send(_follower, msg);
+    else Net.send(null, msg);
+    _follower = null;
   }
 }
 
@@ -1389,22 +1428,41 @@ function showMarkerMenu() {
   openModal('📍 ' + (isEn ? 'Map Marker' : 'Маркер'), html);
 }
 
+function requestCombatHelp() {
+  if (!G?.combatState?.zombie || Net.mode === 'OFFLINE') return;
+  const z = G.combatState.zombie;
+  // Send current HP (not original) to party/nearby
+  const msg = { t:'e', e:'combat_help_request',
+    nodeId: G.world.currentNodeId, roomIdx: G.world.currentRoom,
+    fromId: Net.localId, fromName: G?.characterName || 'Player',
+    zombie: { name:z.name, hp:z.hp, currentHp:z.currentHp, dmg:z.dmg, type:z.type }
+  };
+  Net.broadcast(msg);
+  addLog('📡 Запрос помощи отправлен!', 'info');
+}
+
 function joinCombat() {
   closeModal();
-  // Find the active combat zombie from the broadcast
   if (G.combatState) { addLog('Вы уже в бою!', 'warning'); return; }
-  // Request combat state from host
   addLog('⚔ Вступаешь в бой!', 'danger');
   const msg = { t:'e', e:'join_combat', nodeId: G.world.currentNodeId, roomIdx: G.world.currentRoom };
   if (Net.mode === 'HOST') {
-    // Host already has combat — find zombie in room
-    const room = currentRoom();
-    if (room?.zombies) {
-      startCombat(room.zombies, room);
-    }
+    const room = typeof currentRoom === 'function' ? currentRoom() : null;
+    if (room?.zombies) startCombat(room.zombies, room);
   } else {
     Net.send(null, msg);
   }
+}
+
+function _joinCombatWithHP(currentHp, maxHp, name, dmg, type) {
+  closeModal();
+  if (G.combatState) { addLog('Вы уже в бою!', 'warning'); return; }
+  // Create zombie with ACTUAL current HP from the help request
+  const zombie = { name, hp: maxHp, currentHp, dmg, speed: 1, type: type || 'normal', deathNoise: 10, xp: 5, bonus: 0, loot: null };
+  const room = typeof currentRoom === 'function' ? currentRoom() : null;
+  G.combatState = { zombie, room, turn: 0, _lastAttack: 0 };
+  if (typeof showCombatUI === 'function') showCombatUI();
+  addLog(`⚔ Вступаешь в бой с ${name}! HP: ${currentHp}/${maxHp}`, 'danger');
 }
 
 // ── Wire Bus events to network ──

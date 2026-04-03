@@ -203,10 +203,24 @@ function newGame(charData) {
   initCanvas();
   initAudio();
 
-  // Set initial player position at front door of starting building
+  // Set initial player position INSIDE the first room of starting building
   if (startNode && startNode.building) {
     const startLayout = getLocationLayout(startNode.building);
-    if (startLayout) {
+    if (startLayout && startLayout.rooms?.length > 0) {
+      // Enter the first ground floor room (hallway/прихожая)
+      const firstRoom = startLayout.rooms.find(r => r.floorNum === 0) || startLayout.rooms[0];
+      const roomIdx = startNode.building.rooms?.findIndex(r => (r.floorNum || 0) === 0);
+      if (roomIdx >= 0) {
+        G.world.currentRoom = roomIdx;
+        G.world.currentFloor = 0;
+      }
+      sceneData.playerX = firstRoom.cx;
+      sceneData.playerY = firstRoom.cy;
+      sceneData.camX = firstRoom.cx;
+      sceneData.camY = firstRoom.cy;
+      sceneData.targetCamX = firstRoom.cx;
+      sceneData.targetCamY = firstRoom.cy;
+    } else {
       sceneData.playerX = startLayout.frontDoorX;
       sceneData.playerY = startLayout.frontDoorY;
       sceneData.camX = startLayout.frontDoorX;
@@ -3707,6 +3721,7 @@ function showCombatUI() {
       <button class="act-btn" onclick="combatFlee()">${uiIconHtml('combat_flee',18)} Бежать</button>
       ${G.player.skills.stealth >= 5 && G.player.moodles.fatigue < 70 ? `<button class="act-btn stealth-on" onclick="combatStealth()">${uiIconHtml('combat_stealth',18)} Бесшумное устранение</button>` : ''}
       ${hasItem('rock') || hasItem('can_empty') ? `<button class="act-btn" onclick="combatDistract()">${uiIconHtml('combat_distract',18)} Отвлечь</button>` : ''}
+      ${typeof Net !== 'undefined' && Net.mode !== 'OFFLINE' ? `<button class="act-btn" onclick="requestCombatHelp()" style="border-color:var(--cyan);color:var(--cyan)">📡 Запросить помощь</button>` : ''}
     </div>
     <div id="combat-cooldown" style="height:3px;background:rgba(255,34,68,.15);margin-top:4px;border-radius:2px;overflow:hidden"><div id="combat-cd-fill" style="height:100%;width:0%;background:var(--red);transition:width 0.1s"></div></div>`;
   openModal('БОЙ', html);

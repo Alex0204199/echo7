@@ -285,9 +285,15 @@ function updateUI() {
       <button onclick="toggleEmoteMenu()" style="width:36px;height:36px;border-radius:50%;border:1px solid rgba(0,229,255,.3);background:rgba(0,10,0,.8);color:var(--cyan);font-size:16px;cursor:pointer">😀</button>
       <button onclick="showSocialMenu()" style="width:36px;height:36px;border-radius:50%;border:1px solid rgba(0,229,255,.3);background:rgba(0,10,0,.8);color:var(--cyan);font-size:16px;cursor:pointer">🤝</button>
     `;
-    // Add party list if in party
     if (window._party?.members?.length > 1) {
       mpBtns.innerHTML += `<button onclick="leaveParty()" style="width:36px;height:36px;border-radius:50%;border:1px solid rgba(255,34,68,.3);background:rgba(0,10,0,.8);color:var(--red);font-size:12px;cursor:pointer;font-family:monospace" title="Покинуть группу">✕👥</button>`;
+    }
+    // Follow cancel buttons
+    if (typeof _followTarget !== 'undefined' && _followTarget) {
+      mpBtns.innerHTML += `<button onclick="stopFollow()" style="width:36px;height:36px;border-radius:50%;border:1px solid rgba(255,34,68,.3);background:rgba(0,10,0,.8);color:var(--red);font-size:11px;cursor:pointer" title="Перестать следовать">✕👣</button>`;
+    }
+    if (typeof _follower !== 'undefined' && _follower) {
+      mpBtns.innerHTML += `<button onclick="kickFollower()" style="width:36px;height:36px;border-radius:50%;border:1px solid rgba(255,140,0,.3);background:rgba(0,10,0,.8);color:#ff8c00;font-size:11px;cursor:pointer" title="Отменить следование">🚫👣</button>`;
     }
   }
 
