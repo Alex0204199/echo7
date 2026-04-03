@@ -937,12 +937,20 @@ function transitionScene() {
     if (loc) {
       const layout = getLocationLayout(loc);
       if (layout) {
-        sceneData.playerX = layout.frontDoorX;
-        sceneData.playerY = layout.frontDoorY;
-        sceneData.camX = layout.frontDoorX;
-        sceneData.camY = layout.frontDoorY;
-        sceneData.targetCamX = layout.frontDoorX;
-        sceneData.targetCamY = layout.frontDoorY;
+        // If player is in a room, position at room center (not front door)
+        const curRoom = G?.world?.currentRoom;
+        if (curRoom >= 0 && layout.rooms?.[curRoom]) {
+          const rm = layout.rooms[curRoom];
+          sceneData.playerX = rm.cx; sceneData.playerY = rm.cy;
+          sceneData.camX = rm.cx; sceneData.camY = rm.cy;
+        } else {
+          sceneData.playerX = layout.frontDoorX;
+          sceneData.playerY = layout.frontDoorY;
+          sceneData.camX = layout.frontDoorX;
+          sceneData.camY = layout.frontDoorY;
+        }
+        sceneData.targetCamX = sceneData.camX;
+        sceneData.targetCamY = sceneData.camY;
         layout.rooms.forEach((r, i) => sceneData.scannedRooms.add(loc.id + '-' + i));
       }
     }
