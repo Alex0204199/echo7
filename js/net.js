@@ -537,6 +537,26 @@ const Net = {
         addLog(`👥 ${paName} присоединился к группе!`, 'success');
         break;
       }
+      case 'follow_request': {
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); break; }
+        const frName = msg.fromName || '???';
+        const frIsEn = LANG?.current === 'en';
+        let frHtml = `<div style="text-align:center;padding:10px">`;
+        frHtml += `<div style="font-size:14px;color:var(--cyan);margin-bottom:8px">${frName} ${frIsEn?'wants to follow you':'хочет следовать за вами'}</div>`;
+        frHtml += `<div style="display:flex;gap:8px">`;
+        frHtml += `<button class="act-btn" onclick="_acceptFollow('${msg.fromId}')" style="flex:1;padding:10px;border-color:var(--green);color:var(--green)">✓</button>`;
+        frHtml += `<button class="act-btn" onclick="closeModal()" style="flex:1;padding:10px;border-color:var(--red);color:var(--red)">✕</button>`;
+        frHtml += `</div></div>`;
+        openModal('👣', frHtml);
+        break;
+      }
+      case 'follow_accepted': {
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); break; }
+        _followTarget = msg.fromId;
+        const faName = _introductions[msg.fromId]?.name || Net.players[msg.fromId]?.name || '???';
+        addLog(`👣 ${faName} разрешил следование!`, 'success');
+        break;
+      }
       case 'introduce':
         if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); }
         else { _handleIntroduce(msg); }
@@ -564,9 +584,27 @@ const Net = {
       case 'trade_request':
         if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') {
           Net.send(msg.targetId, { t:'e', e:'trade_request', fromId: msg.fromId || senderId, fromName: msg.fromName });
-        } else if (msg.fromId) {
-          showTradeRequest(msg.fromId);
+        } else if (msg.fromId) { showTradeRequest(msg.fromId); }
+        break;
+      case 'trade_accepted':
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); }
+        else {
+          _tradeState = { partnerId: msg.fromId, myOffer:[], theirOffer:[], myConfirm:false, theirConfirm:false };
+          _showTradeUI();
+          addLog('🔄 Обмен начат!', 'success');
         }
+        break;
+      case 'trade_offer_update':
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); }
+        else if (_tradeState) { _tradeState.theirOffer = msg.offer || []; _tradeState.theirConfirm = false; _showTradeUI(); }
+        break;
+      case 'trade_confirm':
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); }
+        else if (_tradeState) { _tradeState.theirConfirm = true; if (_tradeState.myConfirm) _executeTrade(); else _showTradeUI(); }
+        break;
+      case 'trade_cancel':
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); }
+        else { _tradeState = null; closeModal(); addLog('🔄 Обмен отменён партнёром', 'warning'); }
         break;
       default:
         Bus.emit('net:event', { senderId, event: msg.e, data: msg });
@@ -708,19 +746,6 @@ function toggleEmoteMenu() {
   setTimeout(() => { const m = document.getElementById('emote-menu'); if (m) m.remove(); }, 5000);
 }
 
-// ── Player Trading ──
-function showTradeRequest(fromId) {
-  const fromName = Net.players[fromId]?.name || fromId;
-  const isEn = LANG?.current === 'en';
-  let html = `<div style="text-align:center;padding:10px">`;
-  html += `<div style="font-size:14px;color:var(--cyan);margin-bottom:8px">${fromName} ${isEn ? 'wants to trade' : 'предлагает обмен'}</div>`;
-  html += `<div style="display:flex;gap:8px;justify-content:center">`;
-  html += `<button class="act-btn" onclick="acceptTrade('${fromId}')" style="flex:1;padding:10px;border-color:var(--green);color:var(--green)">${isEn ? 'Accept' : 'Принять'}</button>`;
-  html += `<button class="act-btn" onclick="declineTrade('${fromId}')" style="flex:1;padding:10px;border-color:var(--red);color:var(--red)">${isEn ? 'Decline' : 'Отклонить'}</button>`;
-  html += `</div></div>`;
-  openModal('🤝 ' + (isEn ? 'Trade' : 'Обмен'), html);
-}
-
 // ── Social Menu (nearby players) ──
 function showSocialMenu() {
   const myNode = G?.world?.currentNodeId;
@@ -762,30 +787,158 @@ function showSocialMenu() {
   openModal('🤝 ' + (isEn ? 'Social' : 'Социум'), html);
 }
 
+// ── Trade System ──
+let _tradeState = null; // { partnerId, myOffer:[], theirOffer:[], myConfirm:false, theirConfirm:false }
+
 function requestTrade(targetId) {
-  const targetName = Net.players[targetId]?.name || targetId;
-  addLog(`📡 Запрос обмена с ${targetName}...`, 'info');
-  const msg = { t:'e', e:'trade_request', fromId:Net.localId, fromName:G?.characterName||'Player' };
-  if (Net.mode === 'HOST') Net.send(targetId, msg);
-  else Net.send(null, { ...msg, targetId });
   closeModal();
+  const name = G?.characterName || 'Player';
+  const msg = { t:'e', e:'trade_request', fromId:Net.localId, fromName:name, targetId };
+  if (Net.mode === 'HOST') Net.send(targetId, msg);
+  else Net.send(null, msg);
+  addLog(`🔄 Запрос обмена...`, 'info');
 }
 
 function showTradeRequest(fromId) {
-  const fromName = Net.players[fromId]?.name || fromId;
+  const fromName = _introductions[fromId]?.name || Net.players[fromId]?.name || '???';
   const isEn = LANG?.current === 'en';
   let html = `<div style="text-align:center;padding:10px">`;
-  html += `<div style="font-size:14px;color:var(--cyan);margin-bottom:8px">${fromName} ${isEn ? 'wants to trade' : 'предлагает обмен'}</div>`;
-  html += `<div style="display:flex;gap:8px;justify-content:center">`;
-  html += `<button class="act-btn" onclick="acceptTrade('${fromId}')" style="flex:1;padding:10px;border-color:var(--green);color:var(--green)">${isEn ? 'Accept' : 'Принять'}</button>`;
-  html += `<button class="act-btn" onclick="closeModal()" style="flex:1;padding:10px;border-color:var(--red);color:var(--red)">${isEn ? 'Decline' : 'Отклонить'}</button>`;
+  html += `<div style="font-size:14px;color:var(--cyan);margin-bottom:8px">${fromName} ${isEn?'wants to trade':'предлагает обмен'}</div>`;
+  html += `<div style="display:flex;gap:8px">`;
+  html += `<button class="act-btn" onclick="_acceptTradeRequest('${fromId}')" style="flex:1;padding:10px;border-color:var(--green);color:var(--green)">✓ ${isEn?'Accept':'Принять'}</button>`;
+  html += `<button class="act-btn" onclick="closeModal()" style="flex:1;padding:10px;border-color:var(--red);color:var(--red)">✕ ${isEn?'Decline':'Отклонить'}</button>`;
   html += `</div></div>`;
-  openModal('🤝 ' + (isEn ? 'Trade' : 'Обмен'), html);
+  openModal('🔄 ' + (isEn?'Trade':'Обмен'), html);
 }
 
-function acceptTrade(fromId) {
+function _acceptTradeRequest(fromId) {
   closeModal();
-  addLog('🤝 Обмен принят! (в разработке)', 'success');
+  _tradeState = { partnerId: fromId, myOffer: [], theirOffer: [], myConfirm: false, theirConfirm: false };
+  const msg = { t:'e', e:'trade_accepted', fromId:Net.localId, targetId:fromId };
+  if (Net.mode === 'HOST') Net.send(fromId, msg);
+  else Net.send(null, msg);
+  _showTradeUI();
+}
+
+function _showTradeUI() {
+  if (!_tradeState || !G) return;
+  const isEn = LANG?.current === 'en';
+  const partnerName = _introductions[_tradeState.partnerId]?.name || Net.players[_tradeState.partnerId]?.name || '???';
+  let html = '';
+
+  // Two columns
+  html += `<div style="display:flex;gap:6px;margin-bottom:8px">`;
+
+  // My offer
+  html += `<div style="flex:1;border:1px solid var(--green-dim);border-radius:4px;padding:6px">`;
+  html += `<div style="color:var(--green);font-size:9px;letter-spacing:.1em;margin-bottom:4px">${isEn?'YOUR OFFER':'ВАШЕ ПРЕДЛОЖЕНИЕ'}</div>`;
+  if (_tradeState.myOffer.length === 0) {
+    html += `<div style="color:var(--text-muted);font-size:9px;padding:8px 0;text-align:center">${isEn?'Empty':'Пусто'}</div>`;
+  } else {
+    _tradeState.myOffer.forEach((item, i) => {
+      const def = ITEMS[item.id];
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;font-size:9px;padding:2px 0"><span>${def?.name||item.id}</span><button onclick="_tradeRemoveMy(${i})" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:10px">✕</button></div>`;
+    });
+  }
+  html += `<button class="act-btn" onclick="_tradeAddItem()" style="width:100%;padding:4px;font-size:8px;margin-top:4px">+ ${isEn?'Add':'Добавить'}</button>`;
+  html += `</div>`;
+
+  // Their offer
+  html += `<div style="flex:1;border:1px solid var(--cyan);border-radius:4px;padding:6px;opacity:0.8">`;
+  html += `<div style="color:var(--cyan);font-size:9px;letter-spacing:.1em;margin-bottom:4px">${partnerName}</div>`;
+  if (_tradeState.theirOffer.length === 0) {
+    html += `<div style="color:var(--text-muted);font-size:9px;padding:8px 0;text-align:center">${isEn?'Waiting...':'Ожидание...'}</div>`;
+  } else {
+    _tradeState.theirOffer.forEach(item => {
+      const def = ITEMS[item.id];
+      html += `<div style="font-size:9px;padding:2px 0">${def?.name||item.id}${item.qty>1?' ×'+item.qty:''}</div>`;
+    });
+  }
+  html += `</div>`;
+  html += `</div>`;
+
+  // Confirm buttons
+  const myConf = _tradeState.myConfirm;
+  const theirConf = _tradeState.theirConfirm;
+  html += `<div style="display:flex;gap:6px">`;
+  html += `<button class="act-btn" onclick="_tradeConfirm()" style="flex:2;padding:8px;border-color:${myConf?'var(--green)':'var(--green-dim)'};color:${myConf?'var(--green)':'var(--text-dim)'}">${myConf?'✓ ':''} ${isEn?'CONFIRM':'ПОДТВЕРДИТЬ'} ${theirConf?'(партнёр готов)':''}</button>`;
+  html += `<button class="act-btn" onclick="_tradeCancel()" style="flex:1;padding:8px;border-color:var(--red);color:var(--red)">${isEn?'Cancel':'Отмена'}</button>`;
+  html += `</div>`;
+
+  openModal('🔄 ' + (isEn?'Trade':'Обмен'), html);
+  document.getElementById('modal-close').style.display = 'none';
+}
+
+function _tradeAddItem() {
+  if (!_tradeState || !G) return;
+  const isEn = LANG?.current === 'en';
+  let html = `<div style="max-height:40vh;overflow-y:auto">`;
+  G.player.inventory.forEach((item, i) => {
+    const def = ITEMS[item.id];
+    if (!def) return;
+    const alreadyOffered = _tradeState.myOffer.some(o => o._idx === i);
+    if (alreadyOffered) return;
+    html += `<div class="inv-item" style="cursor:pointer;padding:4px 6px" onclick="_tradeSelectItem(${i})"><div class="item-info">${typeof itemIconHtml==='function'?itemIconHtml(item.id,16):''}<span style="font-size:10px">${def.name}${item.qty>1?' ×'+item.qty:''}</span></div></div>`;
+  });
+  html += `</div>`;
+  html += `<button class="act-btn" onclick="_showTradeUI()" style="width:100%;padding:6px;margin-top:4px">${isEn?'Back':'Назад'}</button>`;
+  openModal('+ ' + (isEn?'Add item':'Добавить'), html);
+}
+
+function _tradeSelectItem(invIdx) {
+  const item = G.player.inventory[invIdx];
+  if (!item) return;
+  _tradeState.myOffer.push({ id: item.id, qty: 1, _idx: invIdx });
+  _tradeState.myConfirm = false;
+  // Send offer update to partner
+  const msg = { t:'e', e:'trade_offer_update', targetId: _tradeState.partnerId, offer: _tradeState.myOffer.map(o => ({id:o.id,qty:o.qty})) };
+  if (Net.mode === 'HOST') Net.send(_tradeState.partnerId, msg);
+  else Net.send(null, msg);
+  _showTradeUI();
+}
+
+function _tradeRemoveMy(idx) {
+  _tradeState.myOffer.splice(idx, 1);
+  _tradeState.myConfirm = false;
+  const msg = { t:'e', e:'trade_offer_update', targetId: _tradeState.partnerId, offer: _tradeState.myOffer.map(o => ({id:o.id,qty:o.qty})) };
+  if (Net.mode === 'HOST') Net.send(_tradeState.partnerId, msg);
+  else Net.send(null, msg);
+  _showTradeUI();
+}
+
+function _tradeConfirm() {
+  if (!_tradeState) return;
+  _tradeState.myConfirm = true;
+  const msg = { t:'e', e:'trade_confirm', targetId: _tradeState.partnerId, fromId: Net.localId };
+  if (Net.mode === 'HOST') Net.send(_tradeState.partnerId, msg);
+  else Net.send(null, msg);
+  // If both confirmed — execute trade
+  if (_tradeState.myConfirm && _tradeState.theirConfirm) _executeTrade();
+  else _showTradeUI();
+}
+
+function _tradeCancel() {
+  if (_tradeState) {
+    const msg = { t:'e', e:'trade_cancel', targetId: _tradeState.partnerId };
+    if (Net.mode === 'HOST') Net.send(_tradeState.partnerId, msg);
+    else Net.send(null, msg);
+  }
+  _tradeState = null;
+  closeModal();
+  addLog('🔄 Обмен отменён', 'info');
+}
+
+function _executeTrade() {
+  if (!_tradeState || !G) return;
+  // Remove my offered items
+  _tradeState.myOffer.forEach(o => { removeItem(o.id, o.qty); });
+  // Add their offered items
+  _tradeState.theirOffer.forEach(o => { addItem(o.id, o.qty); });
+  calcWeight();
+  _tradeState = null;
+  closeModal();
+  addLog('🔄 Обмен завершён!', 'success');
+  playSound('trade');
 }
 
 // ── Party System ──
@@ -1096,25 +1249,59 @@ function doHealPlayer(targetId, medId) {
   addLog(`💊 Использовано ${ITEMS[medId]?.name} на другом игроке`, 'success');
 }
 
-// ── Follow System ──
+// ── Follow System (with permission) ──
 let _followTarget = null;
+let _follower = null; // who follows us
 
 function followPlayer(targetId) {
   closeModal();
-  _followTarget = targetId;
-  const name = Net.players[targetId]?.name || targetId;
-  addLog(`👣 Следую за ${name}`, 'info');
+  const name = _introductions[targetId]?.name || Net.players[targetId]?.name || '???';
+  addLog(`👣 Запрос на следование за ${name}...`, 'info');
+  const msg = { t:'e', e:'follow_request', fromId:Net.localId, fromName:G?.characterName||'Player', targetId };
+  if (Net.mode === 'HOST') Net.send(targetId, msg);
+  else Net.send(null, msg);
+}
+
+function _acceptFollow(fromId) {
+  closeModal();
+  _follower = fromId;
+  const name = _introductions[fromId]?.name || Net.players[fromId]?.name || '???';
+  addLog(`👣 ${name} теперь следует за вами`, 'info');
+  const msg = { t:'e', e:'follow_accepted', fromId:Net.localId, targetId:fromId };
+  if (Net.mode === 'HOST') Net.send(fromId, msg);
+  else Net.send(null, msg);
 }
 
 function stopFollow() {
   if (_followTarget) {
-    addLog('👣 Перестал следовать', 'info');
+    const name = Net.players[_followTarget]?.name || '???';
+    addLog(`👣 Перестал следовать за ${name}`, 'info');
     _followTarget = null;
   }
 }
 
-// Check follow — called from Bus player:move
-Bus.on('player:move', () => { /* local player moved — stop following */ if (_followTarget) stopFollow(); });
+// Auto-follow: when leader moves, follower follows
+Bus.on('player:move', (data) => {
+  // If someone follows us — they'll get the movement via position sync
+  // If WE are following someone — our own move cancels following
+  if (_followTarget && data.nodeId) stopFollow();
+});
+
+// Check if we should auto-move to follow target
+function _checkFollow() {
+  if (!_followTarget || !G) return;
+  const leader = Net.players[_followTarget];
+  if (!leader?.nodeId || leader.nodeId === G.world.currentNodeId) return;
+  // Leader moved to a different node — auto follow
+  const targetNode = G.world.nodes[leader.nodeId];
+  if (targetNode && typeof startRoute === 'function') {
+    // Build route to leader's node
+    _followTarget = _followTarget; // keep following
+    startRoute(leader.nodeId);
+  }
+}
+// Check follow every 2 seconds
+setInterval(_checkFollow, 2000);
 
 // ── Map Markers for Group ──
 let _mapMarkers = []; // { x, y (grid), label, color, time }

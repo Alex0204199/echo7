@@ -272,22 +272,23 @@ function updateUI() {
     actionsEl.appendChild(btn);
   });
 
-  // Multiplayer buttons
+  // Multiplayer: floating buttons on canvas (not in action bar)
   if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
-    // Emote
-    const emBtn = document.createElement('button');
-    emBtn.className = 'act-btn';
-    emBtn.style.cssText = 'border-color:var(--cyan);color:var(--cyan);max-width:40px';
-    emBtn.innerHTML = '😀';
-    emBtn.onclick = () => toggleEmoteMenu();
-    actionsEl.appendChild(emBtn);
-    // Social (trade, party)
-    const soBtn = document.createElement('button');
-    soBtn.className = 'act-btn';
-    soBtn.style.cssText = 'border-color:var(--cyan);color:var(--cyan);max-width:40px';
-    soBtn.innerHTML = '🤝';
-    soBtn.onclick = () => showSocialMenu();
-    actionsEl.appendChild(soBtn);
+    let mpBtns = document.getElementById('mp-canvas-btns');
+    if (!mpBtns) {
+      mpBtns = document.createElement('div');
+      mpBtns.id = 'mp-canvas-btns';
+      mpBtns.style.cssText = 'position:absolute;bottom:8px;right:8px;z-index:15;display:flex;flex-direction:column;gap:4px';
+      document.getElementById('canvas-wrap')?.appendChild(mpBtns);
+    }
+    mpBtns.innerHTML = `
+      <button onclick="toggleEmoteMenu()" style="width:36px;height:36px;border-radius:50%;border:1px solid rgba(0,229,255,.3);background:rgba(0,10,0,.8);color:var(--cyan);font-size:16px;cursor:pointer">😀</button>
+      <button onclick="showSocialMenu()" style="width:36px;height:36px;border-radius:50%;border:1px solid rgba(0,229,255,.3);background:rgba(0,10,0,.8);color:var(--cyan);font-size:16px;cursor:pointer">🤝</button>
+    `;
+    // Add party list if in party
+    if (window._party?.members?.length > 1) {
+      mpBtns.innerHTML += `<button onclick="leaveParty()" style="width:36px;height:36px;border-radius:50%;border:1px solid rgba(255,34,68,.3);background:rgba(0,10,0,.8);color:var(--red);font-size:12px;cursor:pointer;font-family:monospace" title="Покинуть группу">✕👥</button>`;
+    }
   }
 
   if (G.creative) {
