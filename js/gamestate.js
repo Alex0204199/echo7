@@ -1924,9 +1924,10 @@ function advanceHourTick() {
 // Real-time clock update (called from animLoop)
 function tickRealTime(now) {
   if (!G || !G.player.alive || G.paused) { G.lastRealTime = now; return; }
-  // Modal open = paused (except during timed actions)
+  // Modal open = paused (except during timed actions or multiplayer)
   const modalOpen = document.getElementById('modal-overlay')?.classList.contains('active');
-  if (modalOpen && !G.activeAction) { G.lastRealTime = now; return; }
+  const isMultiplayer = typeof Net !== 'undefined' && Net.mode !== 'OFFLINE';
+  if (modalOpen && !G.activeAction && !isMultiplayer) { G.lastRealTime = now; return; }
 
   const dt = (now - (G.lastRealTime || now)) / 1000; // seconds
   G.lastRealTime = now;
@@ -7300,17 +7301,25 @@ function renderMapCanvas() {
     ctx.shadowBlur=0;
   }
 
-  // ── Remote player markers (cyan) ──
+  // ── Remote player markers (cyan) with smooth movement ──
   if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
     Object.entries(Net.players).forEach(([pid, pInfo]) => {
       if (pid === Net.localId || !pInfo.nodeId) return;
       const pNode = nodes[pInfo.nodeId];
       if (!pNode || !pNode.discovered) return;
-      const rpX = isoX(pNode.gx + 0.5, pNode.gy + 0.5);
-      let rpY = isoY(pNode.gx + 0.5, pNode.gy + 0.5);
+
+      // Smooth movement — lerp screen position
+      const targetX = isoX(pNode.gx + 0.5, pNode.gy + 0.5);
+      let targetY = isoY(pNode.gx + 0.5, pNode.gy + 0.5);
       if (pNode.type === 'building' && pNode.building) {
-        rpY -= (BLD_H[pNode.building.type] || 2) * halfTH * 0.85;
+        targetY -= (BLD_H[pNode.building.type] || 2) * halfTH * 0.85;
       }
+      if (!pInfo._mapX) { pInfo._mapX = targetX; pInfo._mapY = targetY; }
+      pInfo._mapX += (targetX - pInfo._mapX) * 0.08;
+      pInfo._mapY += (targetY - pInfo._mapY) * 0.08;
+      const rpX = pInfo._mapX;
+      let rpY = pInfo._mapY;
+
       const rpBob = Math.sin(Date.now() * 0.004 + pid.charCodeAt(0)) * 2;
       rpY += rpBob - 8;
       ctx.shadowColor = '#00E5FF'; ctx.shadowBlur = 8;
