@@ -126,29 +126,33 @@ function lobbyStartGame() {
 // ── CLIENT: Receive game_start ──
 Bus.on('net:game_start', (msg) => {
   closeModal();
-  // Client already has world (created during chargen). Apply host's state.
-  if (G) {
-    // Regenerate world with host's seed if different
-    if (msg.seed && msg.seed !== G.seed) {
-      window._forceSeed = msg.seed;
-      // Save current player data
-      const myPlayer = { ...G.player };
-      const myName = G.characterName;
-      newGame({ name: myName, occupation: G.scenario || 'unemployed', traits: G.traitIds || [], difficulty: msg.difficulty?.id || 'normal', startSeason: msg.season || 'summer', sandbox: msg.difficulty });
-      // Wait for world gen, then restore
-      setTimeout(() => {
-        Net._applyWelcomeData();
-        G.lastRealTime = Date.now(); G.realTimeAccum = 0; G.paused = false;
-        addLog('📡 Мир синхронизирован. Игра началась!', 'success');
-        updateUI();
-      }, 5000);
-    } else {
-      // Same seed — just apply welcome data
+  if (!G) return;
+
+  // Save client's chargen data before regenerating world
+  const savedPlayer = JSON.parse(JSON.stringify(G.player));
+  const savedName = G.characterName;
+  const savedOcc = G.scenario || 'unemployed';
+  const savedTraits = G.traitIds || [];
+
+  if (msg.seed && msg.seed !== G.seed) {
+    // Regenerate world with host's seed (same world for everyone)
+    window._forceSeed = msg.seed;
+    newGame({ name: savedName, occupation: savedOcc, traits: savedTraits, difficulty: msg.difficulty?.id || 'normal', startSeason: msg.season || 'summer', sandbox: msg.difficulty });
+    setTimeout(() => {
+      if (!G) return;
+      // Restore chargen player data (skills, inventory from occupation/traits)
+      Object.assign(G.player, { skills: savedPlayer.skills, skillXp: savedPlayer.skillXp, inventory: savedPlayer.inventory, equipment: savedPlayer.equipment, equipped: savedPlayer.equipped, weaponSlot1: savedPlayer.weaponSlot1, weaponSlot2: savedPlayer.weaponSlot2 });
       Net._applyWelcomeData();
       G.lastRealTime = Date.now(); G.realTimeAccum = 0; G.paused = false;
-      addLog('📡 Игра началась!', 'success');
+      calcWeight();
+      addLog('📡 Мир синхронизирован. Игра началась!', 'success');
       updateUI();
-    }
+    }, 5000);
+  } else {
+    Net._applyWelcomeData();
+    G.lastRealTime = Date.now(); G.realTimeAccum = 0; G.paused = false;
+    addLog('📡 Игра началась!', 'success');
+    updateUI();
   }
 });
 
