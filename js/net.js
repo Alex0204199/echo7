@@ -497,9 +497,21 @@ const Net = {
         break;
       }
       case 'combat_damage': {
-        // Someone dealt damage to zombie — update local combat state
         if (G?.combatState?.zombie && msg.nodeId === G.world.currentNodeId) {
           G.combatState.zombie.currentHp = Math.max(0, msg.zombieHp);
+          // Track ally attack time for combo detection
+          G.combatState._lastAllyAttack = msg.attackTime || Date.now();
+          // Add participant if not already
+          if (G.combatState._participants && msg.attackerName) {
+            if (!G.combatState._participants.find(p => p.name === msg.attackerName)) {
+              G.combatState._participants.push({ id: senderId, name: msg.attackerName, totalDmg: 0 });
+            }
+            const attacker = G.combatState._participants.find(p => p.name === msg.attackerName);
+            if (attacker) attacker.totalDmg += msg.dmg || 0;
+          }
+          // Combat log
+          if (!G.combatState._log) G.combatState._log = [];
+          G.combatState._log.push(`${msg.attackerName}: −${msg.dmg} урона`);
           if (typeof showCombatUI === 'function' && G.combatState) showCombatUI();
           if (msg.zombieHp <= 0) {
             addLog(`${G.combatState.zombie.name} уничтожен совместными усилиями!`, 'success');

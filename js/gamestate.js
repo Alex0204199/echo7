@@ -3691,55 +3691,142 @@ function ejectMag(weaponIdx) {
 }
 
 function showCombatUI() {
+  if (!G.combatState) return;
   const z = G.combatState.zombie;
   const w = getEquippedWeapon();
   const invItem = G.player.inventory.find(i => i.id === G.player.equipped);
   const hpPct = Math.round(z.currentHp / z.hp * 100);
   const hpColor = hpPct > 50 ? 'var(--green)' : hpPct > 25 ? 'var(--yellow)' : 'var(--red)';
+  const isMP = typeof Net !== 'undefined' && Net.mode !== 'OFFLINE';
 
-  let weaponInfo = `${w.name} (урон: ${w.dmg}`;
+  // Weapon cooldown based on type (ms)
+  const weaponCd = w.subtype === 'firearm' ? 2000 : w.subtype === 'melee' ? (w.dmg > 20 ? 1800 : 1200) : 1000;
+  if (!G.combatState._weaponCd) G.combatState._weaponCd = weaponCd;
+  if (!G.combatState._participants) G.combatState._participants = [{ id: typeof Net !== 'undefined' ? Net.localId : 'local', name: G.characterName, totalDmg: 0 }];
+  if (!G.combatState._blocking) G.combatState._blocking = false;
+  if (!G.combatState._blockCdUntil) G.combatState._blockCdUntil = 0;
+
+  let html = '';
+
+  // ── Zombie Section ──
+  html += `<div style="text-align:center;padding:4px 0 8px;border-bottom:1px solid var(--border);margin-bottom:6px">`;
+  html += `<div style="font-size:22px;margin-bottom:2px">${z.type==='fat'?'🧟‍♂️':z.type==='runner'?'🏃‍♂️':'💀'}</div>`;
+  html += `<div style="color:var(--red);font-size:13px;font-weight:bold;letter-spacing:.1em">${z.name}</div>`;
+  html += `<div style="margin:4px auto;width:80%;height:8px;background:rgba(255,34,68,.15);border-radius:4px;overflow:hidden">`;
+  html += `<div style="height:100%;width:${hpPct}%;background:${hpColor};border-radius:4px;transition:width .3s"></div></div>`;
+  html += `<div style="font-size:10px;color:${hpColor}">${z.currentHp} / ${z.hp} HP</div>`;
+  html += `<div style="font-size:9px;color:var(--text-dim)">Урон: ${z.dmg} · Скорость: ${z.speed}</div>`;
+  html += `</div>`;
+
+  // ── Participants Section (co-op) ──
+  if (isMP && G.combatState._participants.length > 0) {
+    html += `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;justify-content:center">`;
+    G.combatState._participants.forEach(p => {
+      const isMe = p.id === (typeof Net !== 'undefined' ? Net.localId : 'local');
+      const col = isMe ? 'var(--green)' : 'var(--cyan)';
+      html += `<div style="border:1px solid ${col};border-radius:4px;padding:3px 6px;font-size:8px;color:${col};text-align:center;min-width:50px">`;
+      html += `<div style="font-weight:bold">${isMe ? 'Вы' : p.name}</div>`;
+      html += `<div style="color:var(--text-dim)">DMG: ${p.totalDmg}</div>`;
+      html += `</div>`;
+    });
+    html += `</div>`;
+  }
+
+  // ── My Weapon ──
+  let weaponLabel = `${w.name} (${w.dmg})`;
   if (w.subtype === 'firearm' && invItem) {
     const ammoInfo = getWeaponAmmoInfo(invItem);
-    weaponInfo += ` · ${ammoInfo.loaded}/${ammoInfo.max} патр.`;
+    weaponLabel += ` · ${ammoInfo.loaded}/${ammoInfo.max}`;
   }
-  if (w.durability > 0) weaponInfo += ` · прочн: ${Math.round(w.durability)}`;
-  weaponInfo += ')';
+  html += `<div style="font-size:9px;color:var(--text-dim);text-align:center;margin-bottom:4px">${itemIconHtml(G.player.equipped,16)} ${weaponLabel}</div>`;
 
-  // Secondary weapon info
+  // ── Combat Actions ──
+  html += `<div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:center">`;
+
+  // Attack button with cooldown
+  const atkReady = !G.combatState._lastAttack || Date.now() - G.combatState._lastAttack >= G.combatState._weaponCd;
+  html += `<button class="act-btn danger" id="combat-atk-btn" onclick="combatAttack()" style="flex:1;min-width:70px;padding:6px;${atkReady?'':'opacity:.4;pointer-events:none'}">${uiIconHtml('combat_attack',16)} Атака</button>`;
+
+  // Block button
+  const blockReady = Date.now() >= (G.combatState._blockCdUntil || 0);
+  html += `<button class="act-btn" onclick="combatBlock()" style="flex:1;min-width:60px;padding:6px;border-color:var(--cyan);color:var(--cyan);${blockReady?'':'opacity:.4;pointer-events:none'}">${G.combatState._blocking ? '🛡 Блок!' : '🛡 Защита'}</button>`;
+
+  // Weapon switch
   const otherSlot = G.player.activeSlot === 1 ? 2 : 1;
   const otherWId = G.player[`weaponSlot${otherSlot}`];
   const otherW = otherWId && ITEMS[otherWId] ? ITEMS[otherWId].name : 'Кулаки';
+  html += `<button class="act-btn" onclick="switchWeaponSlot();showCombatUI()" style="flex:1;min-width:60px;padding:6px;font-size:8px">${uiIconHtml('combat_switch',14)} ${otherW}</button>`;
 
-  let html = `
-    <div class="encounter-title">⚠ ${z.name}</div>
-    <div class="encounter-info">
-      <div>HP: <span style="color:${hpColor}">${z.currentHp}/${z.hp}</span> · Урон: ${z.dmg} · Скорость: ${z.speed}</div>
-      <div style="margin-top:4px;display:flex;align-items:center;gap:4px">${itemIconHtml(G.player.equipped,24)} Оружие [${G.player.activeSlot}]: ${weaponInfo}</div>
-      <div style="color:var(--text-dim);font-size:10px;display:flex;align-items:center;gap:4px">${otherWId ? itemIconHtml(otherWId,16) : ''}Слот ${otherSlot}: ${otherW}</div>
-    </div>
-    <div class="encounter-actions">
-      <button class="act-btn danger" id="combat-atk-btn" onclick="combatAttack()">${uiIconHtml('combat_attack',18)} Атаковать</button>
-      <button class="act-btn" onclick="switchWeaponSlot()">${uiIconHtml('combat_switch',18)} Сменить (${otherW})</button>
-      <button class="act-btn" onclick="combatFlee()">${uiIconHtml('combat_flee',18)} Бежать</button>
-      ${G.player.skills.stealth >= 5 && G.player.moodles.fatigue < 70 ? `<button class="act-btn stealth-on" onclick="combatStealth()">${uiIconHtml('combat_stealth',18)} Бесшумное устранение</button>` : ''}
-      ${hasItem('rock') || hasItem('can_empty') ? `<button class="act-btn" onclick="combatDistract()">${uiIconHtml('combat_distract',18)} Отвлечь</button>` : ''}
-      ${typeof Net !== 'undefined' && Net.mode !== 'OFFLINE' ? `<button class="act-btn" onclick="requestCombatHelp()" style="border-color:var(--cyan);color:var(--cyan)">📡 Запросить помощь</button>` : ''}
-    </div>
-    <div id="combat-cooldown" style="height:3px;background:rgba(255,34,68,.15);margin-top:4px;border-radius:2px;overflow:hidden"><div id="combat-cd-fill" style="height:100%;width:0%;background:var(--red);transition:width 0.1s"></div></div>`;
-  openModal('БОЙ', html);
+  // Flee
+  html += `<button class="act-btn" onclick="combatFlee()" style="flex:1;min-width:50px;padding:6px">${uiIconHtml('combat_flee',14)} Бежать</button>`;
+
+  // MP: Request help
+  if (isMP) {
+    html += `<button class="act-btn" onclick="requestCombatHelp()" style="flex:1;min-width:60px;padding:6px;border-color:var(--cyan);color:var(--cyan);font-size:8px">📡 SOS</button>`;
+  }
+
+  // Distract
+  if (hasItem('rock') || hasItem('can_empty')) {
+    html += `<button class="act-btn" onclick="combatDistract()" style="flex:1;min-width:60px;padding:6px;font-size:8px">${uiIconHtml('combat_distract',14)} Отвлечь</button>`;
+  }
+  html += `</div>`;
+
+  // Cooldown bar
+  html += `<div id="combat-cooldown" style="height:4px;background:rgba(255,34,68,.1);margin-top:4px;border-radius:2px;overflow:hidden"><div id="combat-cd-fill" style="height:100%;width:0%;background:var(--red);transition:width .15s"></div></div>`;
+
+  // Combat log (last 3 entries)
+  if (G.combatState._log) {
+    html += `<div style="margin-top:4px;max-height:40px;overflow-y:auto;font-size:8px;color:var(--text-dim)">`;
+    G.combatState._log.slice(-3).forEach(l => { html += `<div>${l}</div>`; });
+    html += `</div>`;
+  }
+
+  openModal('⚔ БОЙ', html);
   document.getElementById('modal-close').style.display = 'none';
+
+  // Auto-refresh UI every 500ms for cooldown updates
+  if (G.combatState && !G.combatState._uiTimer) {
+    G.combatState._uiTimer = setInterval(() => {
+      if (!G.combatState) { clearInterval(G.combatState?._uiTimer); return; }
+      // Update cooldown bar
+      const cdFill = document.getElementById('combat-cd-fill');
+      if (cdFill && G.combatState._lastAttack) {
+        const elapsed = Date.now() - G.combatState._lastAttack;
+        const cd = G.combatState._weaponCd || 1500;
+        const pct = Math.max(0, 100 - (elapsed / cd * 100));
+        cdFill.style.width = pct + '%';
+      }
+      // Re-enable attack button when cooldown expires
+      const atkBtn = document.getElementById('combat-atk-btn');
+      if (atkBtn) {
+        const ready = !G.combatState._lastAttack || Date.now() - G.combatState._lastAttack >= (G.combatState._weaponCd || 1500);
+        atkBtn.style.opacity = ready ? '1' : '0.4';
+        atkBtn.style.pointerEvents = ready ? 'auto' : 'none';
+      }
+    }, 200);
+  }
+}
+
+// ── Block mechanic ──
+function combatBlock() {
+  if (!G.combatState) return;
+  if (Date.now() < (G.combatState._blockCdUntil || 0)) return;
+  G.combatState._blocking = true;
+  G.combatState._blockCdUntil = Date.now() + 7000; // 5s block + 2s cooldown
+  if (!G.combatState._log) G.combatState._log = [];
+  G.combatState._log.push('🛡 Вы приготовились к защите! (−50% урона, 2с)');
+  addLog('🛡 Защита! Урон снижен на 50% на 2 секунды.', 'info');
+  // Block expires after 2 seconds
+  setTimeout(() => { if (G.combatState) G.combatState._blocking = false; showCombatUI(); }, 2000);
+  showCombatUI();
 }
 
 function combatAttack() {
-  // Cooldown check (1.5s between attacks)
+  if (!G.combatState) return;
+  const cd = G.combatState._weaponCd || 1500;
   const now = Date.now();
-  if (G.combatState._lastAttack && now - G.combatState._lastAttack < 1500) return;
+  if (G.combatState._lastAttack && now - G.combatState._lastAttack < cd) return;
   G.combatState._lastAttack = now;
-  // Disable button + show cooldown bar
-  const atkBtn = document.getElementById('combat-atk-btn');
-  const cdFill = document.getElementById('combat-cd-fill');
-  if (atkBtn) { atkBtn.disabled = true; setTimeout(() => { if (atkBtn) atkBtn.disabled = false; }, 1500); }
-  if (cdFill) { cdFill.style.width = '100%'; setTimeout(() => { if (cdFill) cdFill.style.transition = 'width 1.4s linear'; cdFill.style.width = '0%'; setTimeout(() => { if (cdFill) cdFill.style.transition = 'width 0.1s'; }, 1500); }, 50); }
 
   Bus.emit('combat:action', { action: 'attack' });
   const z = G.combatState.zombie;
@@ -3791,10 +3878,29 @@ function combatAttack() {
     const isCrit = rng.chance(critChance);
     if (isCrit) dmg *= 1.8;
     dmg = Math.round(dmg);
+
+    // Combo check: if another player attacked in last 500ms, bonus +30%
+    if (G.combatState._lastAllyAttack && now - G.combatState._lastAllyAttack < 500) {
+      dmg = Math.round(dmg * 1.3);
+      if (!G.combatState._log) G.combatState._log = [];
+      G.combatState._log.push('💥 COMBO! +30% урона!');
+    }
+
     z.currentHp -= dmg;
+
+    // Track my total damage
+    if (G.combatState._participants) {
+      const myId = typeof Net !== 'undefined' ? Net.localId : 'local';
+      const me = G.combatState._participants.find(p2 => p2.id === myId);
+      if (me) me.totalDmg += dmg;
+    }
+
+    // Combat log
+    if (!G.combatState._log) G.combatState._log = [];
+
     // Broadcast damage to co-op players
     if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
-      Net.broadcast({ t:'e', e:'combat_damage', nodeId:G.world.currentNodeId, roomIdx:G.world.currentRoom, zombieHp:z.currentHp, dmg, attackerName:G.characterName });
+      Net.broadcast({ t:'e', e:'combat_damage', nodeId:G.world.currentNodeId, roomIdx:G.world.currentRoom, zombieHp:z.currentHp, dmg, attackerName:G.characterName, attackTime:now });
     }
     const noiseAdd = w.noise || 15;
     addNoise(noiseAdd);
@@ -3855,8 +3961,10 @@ function zombieAttack() {
     const hitPart = rng.pick(parts);
     const m = G.modifiers || {};
     let dmg = z.dmg + rng.int(-2, 3);
-    const armorReduction = Math.min(0.8, getArmor() / 100); // Armor reduces up to 80%
+    const armorReduction = Math.min(0.8, getArmor() / 100);
     dmg = Math.max(1, Math.round(dmg * (G.difficulty.zombieDmg || 1) * (1 - (m.dmgReduction || 0)) * (1 - armorReduction)));
+    // Block reduces damage by 50%
+    if (G.combatState?._blocking) { dmg = Math.max(1, Math.round(dmg * 0.5)); }
     p.hp[hitPart] = Math.max(0, p.hp[hitPart] - dmg);
     if(G?._dayStats) G._dayStats.wasHurt=true;
     if (navigator.vibrate) navigator.vibrate(50);
@@ -3901,6 +4009,7 @@ function zombieAttack() {
 
 function combatVictory() {
   const z = G.combatState.zombie;
+  if (G.combatState._uiTimer) clearInterval(G.combatState._uiTimer);
   closeModal();
   addLog(`${z.name} уничтожен!`, 'success');
   addNoise(z.deathNoise);
