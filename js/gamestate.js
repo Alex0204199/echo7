@@ -244,8 +244,11 @@ function newGame(charData) {
   if (window._pendingHost) {
     window._pendingHost = false;
     _showNetOverlay('📡 Подключение к серверу...');
-    Bus.on('net:host_ready', () => { _removeNetOverlay(); showHostLobby(); });
-    Bus.on('net:error', (e) => { _showNetOverlay('⚠ ' + e.error, true); });
+    // One-shot listeners (remove after first fire)
+    const _onReady = () => { Bus._h['net:host_ready'] = (Bus._h['net:host_ready']||[]).filter(f=>f!==_onReady); _removeNetOverlay(); showHostLobby(); };
+    const _onErr = (e) => { Bus._h['net:error'] = (Bus._h['net:error']||[]).filter(f=>f!==_onErr); _showNetOverlay('⚠ ' + e.error, true); };
+    Bus.on('net:host_ready', _onReady);
+    Bus.on('net:error', _onErr);
     Net.hostGame(G.characterName || 'Host');
   } else if (window._pendingJoin) {
     window._pendingJoin = false;
@@ -3823,8 +3826,8 @@ function showCombatUI() {
 
   // Auto-refresh UI every 500ms for cooldown updates
   if (G.combatState && !G.combatState._uiTimer) {
-    G.combatState._uiTimer = setInterval(() => {
-      if (!G.combatState) { clearInterval(G.combatState?._uiTimer); return; }
+    const _cbtTimerId = setInterval(() => {
+      if (!G?.combatState) { clearInterval(_cbtTimerId); return; }
       // Update cooldown bar
       const cdFill = document.getElementById('combat-cd-fill');
       if (cdFill && G.combatState._lastAttack) {
@@ -3841,6 +3844,7 @@ function showCombatUI() {
         atkBtn.style.pointerEvents = ready ? 'auto' : 'none';
       }
     }, 200);
+    G.combatState._uiTimer = _cbtTimerId;
   }
 }
 
@@ -4016,6 +4020,7 @@ function combatAttack() {
 }
 
 function zombieAttack() {
+  if (!G?.combatState?.zombie) return;
   const z = G.combatState.zombie;
   const p = G.player;
   const zHitChance = 50 - (p.skills.stealth * 5) + z.bonus + (getNightMod() / 2);
@@ -4122,6 +4127,7 @@ function combatVictory() {
     }
   }
 
+  if (G.combatState?._uiTimer) clearInterval(G.combatState._uiTimer);
   G.combatState = null;
   advanceTime(1);
   playSound('kill');
@@ -4191,6 +4197,7 @@ function combatFlee() {
       if (ze.roomIdx === -1 && ze.attacking) return false;
       return true;
     });
+    if (G.combatState?._uiTimer) clearInterval(G.combatState._uiTimer);
     G.combatState = null;
   } else {
     addLog('Не удалось сбежать!', 'danger');
@@ -4229,6 +4236,7 @@ function combatDistract() {
   removeItem(distractItem, 1);
   addNoise(ITEMS[distractItem].noise || 10);
   addLog(`Бросаешь ${ITEMS[distractItem].name}. ${G.combatState.zombie.name} отвлечён!`, 'info');
+  if (G.combatState?._uiTimer) clearInterval(G.combatState._uiTimer);
   G.combatState = null;
   advanceTime(1);
   playSound('distract');

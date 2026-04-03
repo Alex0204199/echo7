@@ -1455,7 +1455,7 @@ function _checkFollow() {
     }
   }
 }
-setInterval(_checkFollow, 1500);
+let _followInterval = setInterval(_checkFollow, 1500);
 
 // ── Map Markers for Group ──
 let _mapMarkers = []; // { x, y (grid), label, color, time }
