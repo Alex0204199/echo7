@@ -1035,14 +1035,22 @@ function _animLoopInner() {
       ctx.stroke();
     }
 
-    // Name label
-    if (rp.name) {
-      ctx.globalAlpha = 0.6;
-      ctx.fillStyle = '#00E5FF';
-      ctx.font = '8px monospace';
+    // Status icon above head
+    if (rp.status) {
+      ctx.globalAlpha = 0.7;
+      ctx.font = '11px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(rp.name, rpSX, rpSY - 14);
+      ctx.fillText(rp.status, rpSX, rpSY - 22);
     }
+    // Name label (show '???' if not introduced)
+    const _introduced = typeof _introductions !== 'undefined' && _introductions?.[rpId];
+    const _displayName = _introduced ? rp.name : '???';
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = _introduced ? '#00E5FF' : '#506050';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(_displayName, rpSX, rpSY - 14);
+
     // Emote bubble (3 seconds)
     if (rp.emote && rp.emoteTime && Date.now() - rp.emoteTime < 3000) {
       const age = (Date.now() - rp.emoteTime) / 3000;
@@ -1237,12 +1245,17 @@ function _animLoopInner() {
     ctx.globalAlpha = 1;
   }
 
-  // ── Multiplayer: broadcast NORMALIZED position & lerp remote players ──
+  // ── Multiplayer: broadcast NORMALIZED position + status ──
   if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE' && G) {
-    // Normalize position relative to canvas size (0..1) so different screen sizes work
     const _cw = canvas ? canvas.width / window.devicePixelRatio : 400;
     const _ch = canvas ? canvas.height / window.devicePixelRatio : 400;
-    Net.sendPosition(sceneData.playerX / _cw, sceneData.playerY / _ch, sceneData.playerDir, G.world.currentNodeId, G.world.currentRoom);
+    // Determine player status icon
+    let _pStatus = '';
+    if (G.combatState) _pStatus = '⚔';
+    else if (G.activeAction) _pStatus = '🔍';
+    else if (G.player?.stealthMode) _pStatus = '🥷';
+    else if (G.world.currentRoute && !G.world.currentRoute.paused) _pStatus = '🏃';
+    Net.sendPosition(sceneData.playerX / _cw, sceneData.playerY / _ch, sceneData.playerDir, G.world.currentNodeId, G.world.currentRoom, _pStatus);
     // Lerp remote player positions for smooth rendering
     Object.values(sceneData.remotePlayers).forEach(rp => {
       if (rp.targetX !== undefined) {

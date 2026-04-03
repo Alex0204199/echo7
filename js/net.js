@@ -151,13 +151,13 @@ const Net = {
     this.ws.send(JSON.stringify({ t: 'broadcast', data: msg }));
   },
 
-  sendPosition(x, y, dir, nodeId, roomIdx) {
+  sendPosition(x, y, dir, nodeId, roomIdx, status) {
     if (!this.ws || this.ws.readyState !== 1) return;
     const now = Date.now();
     if (now - this._lastPosSend < this._posInterval) return;
     this._lastPosSend = now;
-    // x,y are normalized (0..1) — send with 4 decimal precision
     const msg = { t: 'p', x: +x.toFixed(4), y: +y.toFixed(4), d: dir, n: nodeId, r: roomIdx };
+    if (status) msg.s = status;
     if (this.mode === 'HOST') {
       if (!this.players[this.localId]) return; // not ready yet
       const _cw = (typeof canvas !== 'undefined' && canvas) ? canvas.width / window.devicePixelRatio : 400;
@@ -360,10 +360,10 @@ const Net = {
     const localX = msg.x * cw;
     const localY = msg.y * ch;
     if (!this.players[id]) this.players[id] = { name:'???', nodeId:null, roomIdx:-1, x:0, y:0, dir:2 };
-    Object.assign(this.players[id], { x:localX, y:localY, dir:msg.d, nodeId:msg.n, roomIdx:msg.r });
+    Object.assign(this.players[id], { x:localX, y:localY, dir:msg.d, nodeId:msg.n, roomIdx:msg.r, status:msg.s||'' });
     if (!sceneData.remotePlayers[id]) sceneData.remotePlayers[id] = { x:localX, y:localY, dir:msg.d, nodeId:msg.n, roomIdx:msg.r, name:this.players[id].name, color:'#00E5FF' };
     const rp = sceneData.remotePlayers[id];
-    rp.targetX=localX; rp.targetY=localY; rp.dir=msg.d; rp.nodeId=msg.n; rp.roomIdx=msg.r;
+    rp.targetX=localX; rp.targetY=localY; rp.dir=msg.d; rp.nodeId=msg.n; rp.roomIdx=msg.r; rp.status=msg.s||'';
     if (this.mode === 'HOST') this.broadcast({ ...msg, id });
   },
 
@@ -537,6 +537,14 @@ const Net = {
         addLog(`👥 ${paName} присоединился к группе!`, 'success');
         break;
       }
+      case 'introduce':
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); }
+        else { _handleIntroduce(msg); }
+        break;
+      case 'introduce_back':
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); }
+        else { _handleIntroduceBack(msg); }
+        break;
       case 'map_marker': {
         if (msg.marker) {
           if (typeof _mapMarkers !== 'undefined') _mapMarkers.push(msg.marker);
@@ -728,8 +736,14 @@ function showSocialMenu() {
   html += `<div style="color:var(--text-dim);font-size:10px;margin-bottom:8px">${isEn ? 'Players at your location' : 'Игроки в вашей локации'}:</div>`;
 
   nearby.forEach(([id, info]) => {
-    html += `<div style="border:1px solid rgba(0,229,255,.2);border-radius:4px;padding:8px;margin-bottom:6px;background:rgba(0,229,255,.03)">`;
-    html += `<div style="color:var(--cyan);font-size:12px;font-weight:bold;margin-bottom:6px">● ${info.name || id}</div>`;
+    const isKnown = _introductions[id]?.introduced;
+    const displayName = isKnown ? (info.name || id) : '???';
+    html += `<div style="border:1px solid ${isKnown?'rgba(0,229,255,.2)':'rgba(80,96,80,.3)'};border-radius:4px;padding:8px;margin-bottom:6px;background:${isKnown?'rgba(0,229,255,.03)':'rgba(0,0,0,.2)'}">`;
+    html += `<div style="color:${isKnown?'var(--cyan)':'var(--text-dim)'};font-size:12px;font-weight:bold;margin-bottom:6px">● ${displayName}</div>`;
+    // Introduce button for strangers
+    if (!isKnown) {
+      html += `<button class="act-btn" onclick="introduceToPlayer('${id}')" style="width:100%;padding:8px;font-size:10px;border-color:var(--cyan);color:var(--cyan);margin-bottom:4px">👋 ${isEn?'Introduce yourself':'Представиться'}</button>`;
+    }
     html += `<div style="display:flex;gap:3px;flex-wrap:wrap">`;
     html += `<button class="act-btn" onclick="requestTrade('${id}')" style="flex:1;padding:5px;font-size:8px;border-color:var(--green);color:var(--green)">🔄 ${isEn?'Trade':'Обмен'}</button>`;
     html += `<button class="act-btn" onclick="inviteToParty('${id}')" style="flex:1;padding:5px;font-size:8px;border-color:var(--cyan);color:var(--cyan)">👥 ${isEn?'Party':'Группа'}</button>`;
@@ -819,6 +833,124 @@ function leaveParty() {
 function assistPlayer(targetId) {
   closeModal();
   joinCombat();
+}
+
+// ── Introduction System ──
+// Players must introduce themselves to each other before seeing full profile
+const _introductions = {}; // { playerId: { name, occupation, daysSurvived, introduced: true } }
+
+function _loadIntroductions() {
+  try { Object.assign(_introductions, JSON.parse(localStorage.getItem('echo7_intros') || '{}')); } catch(e) {}
+}
+function _saveIntroductions() {
+  try { localStorage.setItem('echo7_intros', JSON.stringify(_introductions)); } catch(e) {}
+}
+_loadIntroductions();
+
+function introduceToPlayer(targetId) {
+  closeModal();
+  const myProfile = {
+    name: G?.characterName || 'Player',
+    occupation: G?.scenario || 'unemployed',
+    daysSurvived: G?.player?.daysSurvived || 0,
+    playerId: Net.localId,
+  };
+  addLog(`👋 Представляемся...`, 'info');
+  const msg = { t:'e', e:'introduce', fromId:Net.localId, profile:myProfile, targetId };
+  if (Net.mode === 'HOST') Net.send(targetId, msg);
+  else Net.send(null, msg);
+}
+
+function _handleIntroduce(msg) {
+  const p = msg.profile;
+  const isEn = LANG?.current === 'en';
+  const occNames = { unemployed:'Безработный', police:'Полицейский', military:'Военный', mechanic:'Механик', doctor:'Доктор', cook:'Повар', thief:'Вор', builder:'Строитель', soldier:'Солдат', hunter:'Охотник', trucker:'Дальнобойщик', vagabond:'Бродяга' };
+
+  let html = `<div style="text-align:center;padding:10px">`;
+  html += `<div style="font-size:32px;margin-bottom:8px">👋</div>`;
+  html += `<div style="font-size:16px;color:var(--cyan);font-weight:bold;margin-bottom:4px">${p.name}</div>`;
+  html += `<div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">${occNames[p.occupation] || p.occupation}</div>`;
+  html += `<div style="font-size:9px;color:var(--text-muted);margin-bottom:12px">${isEn ? 'Day' : 'День'} ${p.daysSurvived}</div>`;
+  html += `<div style="color:var(--text-dim);font-size:10px;margin-bottom:10px">${isEn ? 'wants to introduce themselves' : 'хочет представиться'}</div>`;
+  html += `<div style="display:flex;gap:6px">`;
+  html += `<button class="act-btn" onclick="_acceptIntroduce('${msg.fromId}')" style="flex:1;padding:10px;border-color:var(--green);color:var(--green)">👋 ${isEn ? 'Introduce back' : 'Представиться'}</button>`;
+  html += `<button class="act-btn" onclick="closeModal()" style="flex:1;padding:10px;border-color:var(--red);color:var(--red)">${isEn ? 'Ignore' : 'Игнор'}</button>`;
+  html += `</div></div>`;
+
+  // Save their intro regardless
+  _introductions[msg.fromId] = { ...p, introduced: true };
+  _saveIntroductions();
+  // Update remote player name in sceneData
+  if (sceneData.remotePlayers[msg.fromId]) sceneData.remotePlayers[msg.fromId].name = p.name;
+
+  openModal('👋 ' + (isEn ? 'Introduction' : 'Знакомство'), html);
+}
+
+function _acceptIntroduce(fromId) {
+  closeModal();
+  // Send our profile back
+  const myProfile = {
+    name: G?.characterName || 'Player',
+    occupation: G?.scenario || 'unemployed',
+    daysSurvived: G?.player?.daysSurvived || 0,
+    playerId: Net.localId,
+  };
+  const msg = { t:'e', e:'introduce_back', fromId:Net.localId, profile:myProfile, targetId:fromId };
+  if (Net.mode === 'HOST') Net.send(fromId, msg);
+  else Net.send(null, msg);
+  addLog(`👋 Вы познакомились с ${_introductions[fromId]?.name || '???'}!`, 'success');
+}
+
+function _handleIntroduceBack(msg) {
+  const p = msg.profile;
+  _introductions[msg.fromId] = { ...p, introduced: true };
+  _saveIntroductions();
+  if (sceneData.remotePlayers[msg.fromId]) sceneData.remotePlayers[msg.fromId].name = p.name;
+  addLog(`👋 ${p.name} представился! Теперь вы знакомы.`, 'success');
+}
+
+// ── Mini-profile (tap on player on LIDAR) ──
+function showMiniProfile(playerId) {
+  const info = _introductions[playerId];
+  if (!info?.introduced) {
+    addLog('Вы не знакомы с этим игроком. Представьтесь через 🤝', 'info');
+    return;
+  }
+  const isEn = LANG?.current === 'en';
+  const occNames = { unemployed:'Безработный', police:'Полицейский', military:'Военный', mechanic:'Механик', doctor:'Доктор', cook:'Повар', thief:'Вор', builder:'Строитель', soldier:'Солдат', hunter:'Охотник', trucker:'Дальнобойщик', vagabond:'Бродяга' };
+  const pInfo = Net.players[playerId] || {};
+  const status = pInfo.status || '';
+  const statusLabels = { '⚔':'В бою', '🔍':'Обыскивает', '🥷':'Скрытность', '🏃':'В пути' };
+
+  let html = `<div style="text-align:center;padding:8px">`;
+  html += `<div style="font-size:28px;margin-bottom:6px;filter:drop-shadow(0 0 6px rgba(0,229,255,.5))">👤</div>`;
+  html += `<div style="font-size:16px;color:var(--cyan);font-weight:bold;margin-bottom:4px">${info.name}</div>`;
+  html += `<div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">${occNames[info.occupation] || info.occupation}</div>`;
+  html += `<div style="font-size:9px;color:var(--text-muted);margin-bottom:6px">${isEn ? 'Survived' : 'Выжил'}: ${info.daysSurvived} ${isEn ? 'days' : 'дн.'}</div>`;
+  if (status) {
+    html += `<div style="font-size:11px;margin-bottom:6px">${status} ${statusLabels[status] || ''}</div>`;
+  }
+  // Same location indicator
+  const sameNode = pInfo.nodeId === G?.world?.currentNodeId;
+  html += `<div style="font-size:9px;color:${sameNode?'var(--green)':'var(--text-muted)'};margin-bottom:8px">${sameNode ? '📍 '+(isEn?'Nearby':'Рядом') : '🗺 '+(isEn?'Elsewhere':'В другом месте')}</div>`;
+  html += `</div>`;
+  html += `<button class="act-btn" onclick="closeModal()" style="width:100%;padding:6px">OK</button>`;
+  openModal('👤 ' + info.name, html);
+}
+
+// Check if click on canvas hit a remote player
+function _checkPlayerClick(clickX, clickY) {
+  if (typeof Net === 'undefined' || Net.mode === 'OFFLINE') return false;
+  const w = canvas ? canvas.width / window.devicePixelRatio : 400;
+  const h = canvas ? canvas.height / window.devicePixelRatio : 400;
+  for (const [rpId, rp] of Object.entries(sceneData.remotePlayers)) {
+    if (!rp || rp.nodeId !== G?.world?.currentNodeId || rp.roomIdx !== G?.world?.currentRoom) continue;
+    const rpSX = rp.x - sceneData.camX + w / 2;
+    const rpSY = rp.y - sceneData.camY + h / 2;
+    const dist = Math.hypot(clickX - rpSX, clickY - rpSY);
+    if (dist < 20) { showMiniProfile(rpId); return true; }
+  }
+  return false;
 }
 
 // ── Permission-based social actions ──

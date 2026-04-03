@@ -164,6 +164,8 @@ function handleCanvasClick(e) {
   const rect = canvas.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
+  // Check if clicked on a remote player (multiplayer mini-profile)
+  if (typeof _checkPlayerClick === 'function' && _checkPlayerClick(sx, sy)) return;
   const world = screenToWorld(sx, sy);
 
   const loc = currentLocation();
