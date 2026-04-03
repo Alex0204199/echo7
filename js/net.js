@@ -416,12 +416,17 @@ const Net = {
         break;
       }
       case 'loot_taken': {
-        // Another player took an item — remove from local world state
+        // Another player took an item — remove from local world state + mark taken
         const ltNode = G?.world?.nodes?.[msg.nodeId];
         if (ltNode?.building?.rooms?.[msg.roomIdx]?.containers?.[msg.ci]) {
           const ltCont = ltNode.building.rooms[msg.roomIdx].containers[msg.ci];
-          const ltIdx = ltCont.loot?.findIndex(i => i.id === msg.itemId);
-          if (ltIdx >= 0) ltCont.loot.splice(ltIdx, 1);
+          if (ltCont.loot) {
+            const ltIdx = ltCont.loot.findIndex(i => i.id === msg.itemId && !i._taken);
+            if (ltIdx >= 0) {
+              ltCont.loot[ltIdx]._taken = true;
+              ltCont.loot.splice(ltIdx, 1);
+            }
+          }
         }
         break;
       }
@@ -463,6 +468,41 @@ const Net = {
           if (msg.zombieHp <= 0) {
             addLog(`${G.combatState.zombie.name} уничтожен совместными усилиями!`, 'success');
             if (typeof combatVictory === 'function') combatVictory();
+          }
+        }
+        break;
+      }
+      case 'social_request':
+        // Someone asks permission — relay if needed, then show dialog
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') {
+          Net.send(msg.targetId, msg); // relay to target
+        } else {
+          _handleSocialRequest(msg);
+        }
+        break;
+      case 'social_denied':
+        addLog(LANG?.current==='en'?'Request denied.':'Запрос отклонён.', 'warning');
+        break;
+      case 'social_response':
+        if (msg.fromId && msg.fromId !== Net.localId && this.mode === 'HOST') {
+          Net.send(msg.fromId, msg); // relay
+        } else {
+          _showSocialResponse(msg);
+        }
+        break;
+      case 'remote_heal': {
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') {
+          Net.send(msg.targetId, msg);
+        } else {
+          // Apply healing to our player
+          const med = ITEMS[msg.medId];
+          if (med && G?.player) {
+            if (med.hp) Object.keys(G.player.hp).forEach(k => { G.player.hp[k] = Math.min(100, G.player.hp[k] + (med.hp || 0)); });
+            if (med.infection) G.player.moodles.infection = Math.max(0, G.player.moodles.infection + med.infection);
+            if (med.pain) G.player.moodles.pain = Math.max(0, G.player.moodles.pain + med.pain);
+            if (med.bleeding !== undefined) G.player.moodles.bleeding = 0;
+            addLog(`💊 ${msg.fromName} вылечил вас: ${med.name}`, 'success');
+            if (typeof updateUI === 'function') updateUI();
           }
         }
         break;
@@ -658,10 +698,14 @@ function showSocialMenu() {
   nearby.forEach(([id, info]) => {
     html += `<div style="border:1px solid rgba(0,229,255,.2);border-radius:4px;padding:8px;margin-bottom:6px;background:rgba(0,229,255,.03)">`;
     html += `<div style="color:var(--cyan);font-size:12px;font-weight:bold;margin-bottom:6px">● ${info.name || id}</div>`;
-    html += `<div style="display:flex;gap:4px;flex-wrap:wrap">`;
-    html += `<button class="act-btn" onclick="requestTrade('${id}')" style="flex:1;padding:6px;font-size:9px;border-color:var(--green);color:var(--green)">🔄 ${isEn ? 'Trade' : 'Обмен'}</button>`;
-    html += `<button class="act-btn" onclick="inviteToParty('${id}')" style="flex:1;padding:6px;font-size:9px;border-color:var(--cyan);color:var(--cyan)">👥 ${isEn ? 'Party' : 'В группу'}</button>`;
-    html += `<button class="act-btn" onclick="assistPlayer('${id}')" style="flex:1;padding:6px;font-size:9px">⚔ ${isEn ? 'Assist' : 'Помочь'}</button>`;
+    html += `<div style="display:flex;gap:3px;flex-wrap:wrap">`;
+    html += `<button class="act-btn" onclick="requestTrade('${id}')" style="flex:1;padding:5px;font-size:8px;border-color:var(--green);color:var(--green)">🔄 ${isEn?'Trade':'Обмен'}</button>`;
+    html += `<button class="act-btn" onclick="inviteToParty('${id}')" style="flex:1;padding:5px;font-size:8px;border-color:var(--cyan);color:var(--cyan)">👥 ${isEn?'Party':'Группа'}</button>`;
+    html += `<button class="act-btn" onclick="assistPlayer('${id}')" style="flex:1;padding:5px;font-size:8px">⚔ ${isEn?'Assist':'Помочь'}</button>`;
+    html += `</div><div style="display:flex;gap:3px;margin-top:3px">`;
+    html += `<button class="act-btn" onclick="requestInspectHealth('${id}')" style="flex:1;padding:5px;font-size:8px">❤ ${isEn?'Health':'Здоровье'}</button>`;
+    html += `<button class="act-btn" onclick="requestHealPlayer('${id}')" style="flex:1;padding:5px;font-size:8px;border-color:var(--green);color:var(--green)">💊 ${isEn?'Heal':'Лечить'}</button>`;
+    html += `<button class="act-btn" onclick="requestViewBackpack('${id}')" style="flex:1;padding:5px;font-size:8px">🎒 ${isEn?'Backpack':'Рюкзак'}</button>`;
     html += `</div></div>`;
   });
 
@@ -707,6 +751,135 @@ function inviteToParty(targetId) {
 function assistPlayer(targetId) {
   closeModal();
   joinCombat();
+}
+
+// ── Permission-based social actions ──
+function requestInspectHealth(targetId) {
+  closeModal();
+  const name = G?.characterName || 'Player';
+  const msg = { t:'e', e:'social_request', action:'inspect_health', fromId:Net.localId, fromName:name, targetId };
+  if (Net.mode === 'HOST') Net.send(targetId, msg);
+  else Net.send(null, msg);
+  addLog(`📡 Запрос на осмотр здоровья...`, 'info');
+}
+
+function requestHealPlayer(targetId) {
+  closeModal();
+  // Check if we have medicine
+  const meds = G?.player?.inventory?.filter(i => ITEMS[i.id]?.type === 'medicine');
+  if (!meds || meds.length === 0) { addLog('У вас нет медикаментов!', 'warning'); return; }
+  const name = G?.characterName || 'Player';
+  const msg = { t:'e', e:'social_request', action:'heal', fromId:Net.localId, fromName:name, targetId };
+  if (Net.mode === 'HOST') Net.send(targetId, msg);
+  else Net.send(null, msg);
+  addLog(`📡 Запрос на лечение...`, 'info');
+}
+
+function requestViewBackpack(targetId) {
+  closeModal();
+  const name = G?.characterName || 'Player';
+  const msg = { t:'e', e:'social_request', action:'view_backpack', fromId:Net.localId, fromName:name, targetId };
+  if (Net.mode === 'HOST') Net.send(targetId, msg);
+  else Net.send(null, msg);
+  addLog(`📡 Запрос на просмотр рюкзака...`, 'info');
+}
+
+// Handle incoming social request — show permission dialog
+function _handleSocialRequest(msg) {
+  const isEn = LANG?.current === 'en';
+  const actions = {
+    inspect_health: { icon: '❤', label: isEn ? 'wants to check your health' : 'хочет осмотреть ваше здоровье' },
+    heal: { icon: '💊', label: isEn ? 'wants to heal you' : 'хочет вылечить вас' },
+    view_backpack: { icon: '🎒', label: isEn ? 'wants to see your backpack' : 'хочет посмотреть ваш рюкзак' },
+  };
+  const action = actions[msg.action] || { icon: '❓', label: msg.action };
+
+  let html = `<div style="text-align:center;padding:10px">`;
+  html += `<div style="font-size:24px;margin-bottom:6px">${action.icon}</div>`;
+  html += `<div style="font-size:12px;color:var(--cyan);margin-bottom:4px">${msg.fromName}</div>`;
+  html += `<div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">${action.label}</div>`;
+  html += `<div style="display:flex;gap:8px">`;
+  html += `<button class="act-btn" onclick="_respondSocial('${msg.fromId}','${msg.action}',true)" style="flex:1;padding:10px;border-color:var(--green);color:var(--green)">✓ ${isEn ? 'Allow' : 'Разрешить'}</button>`;
+  html += `<button class="act-btn" onclick="_respondSocial('${msg.fromId}','${msg.action}',false)" style="flex:1;padding:10px;border-color:var(--red);color:var(--red)">✕ ${isEn ? 'Deny' : 'Отказать'}</button>`;
+  html += `</div></div>`;
+  openModal(action.icon + ' ' + (isEn ? 'Request' : 'Запрос'), html);
+}
+
+function _respondSocial(fromId, action, allowed) {
+  closeModal();
+  if (!allowed) {
+    const msg = { t:'e', e:'social_denied', action, fromId };
+    if (Net.mode === 'HOST') Net.send(fromId, msg);
+    else Net.send(null, msg);
+    return;
+  }
+  // Send our data to the requester
+  const p = G.player;
+  let data = {};
+  if (action === 'inspect_health') {
+    data = { hp: {...p.hp}, moodles: {...p.moodles}, alive: p.alive, name: G.characterName };
+  } else if (action === 'heal') {
+    data = { hp: {...p.hp}, name: G.characterName };
+  } else if (action === 'view_backpack') {
+    data = { inventory: p.inventory.map(i => ({ id:i.id, qty:i.qty })), name: G.characterName };
+  }
+  const msg = { t:'e', e:'social_response', action, fromId, data };
+  if (Net.mode === 'HOST') Net.send(fromId, msg);
+  else Net.send(null, msg);
+}
+
+// Display response from social action
+function _showSocialResponse(msg) {
+  const isEn = LANG?.current === 'en';
+  const d = msg.data;
+  if (msg.action === 'inspect_health') {
+    const partNames = { head:'Голова', torso:'Торс', armL:'Л.рука', armR:'П.рука', legL:'Л.нога', legR:'П.нога' };
+    let html = `<div style="font-size:11px">`;
+    Object.entries(d.hp).forEach(([k, v]) => {
+      const col = v >= 80 ? 'var(--green)' : v >= 40 ? 'var(--yellow)' : 'var(--red)';
+      html += `<div style="display:flex;justify-content:space-between;padding:2px 0"><span>${partNames[k]||k}</span><span style="color:${col}">${v}%</span></div>`;
+    });
+    // Moodles
+    const moodleNames = { hunger:'Голод', thirst:'Жажда', fatigue:'Усталость', infection:'Инфекция', pain:'Боль', bleeding:'Кровотеч.', bodyTemp:'Темп. тела' };
+    html += `<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:4px">`;
+    Object.entries(d.moodles).forEach(([k, v]) => {
+      if (!moodleNames[k] || (k !== 'bodyTemp' && v === 0)) return;
+      const display = k === 'bodyTemp' ? v.toFixed(1) + '°C' : Math.round(v) + '%';
+      html += `<div style="display:flex;justify-content:space-between;padding:1px 0;font-size:10px"><span style="color:var(--text-dim)">${moodleNames[k]}</span><span>${display}</span></div>`;
+    });
+    html += `</div></div>`;
+    html += `<button class="act-btn" onclick="closeModal()" style="width:100%;padding:6px;margin-top:6px">OK</button>`;
+    openModal(`❤ ${d.name}`, html);
+  } else if (action === 'heal') {
+    // Show our medicine list to choose what to use
+    const meds = G.player.inventory.filter(i => ITEMS[i.id]?.type === 'medicine');
+    let html = `<div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">${isEn ? 'Choose medicine for' : 'Выберите лекарство для'} ${d.name}:</div>`;
+    meds.forEach((m, i) => {
+      const def = ITEMS[m.id];
+      html += `<button class="act-btn" onclick="doHealPlayer('${msg.fromId}','${m.id}');closeModal()" style="width:100%;padding:6px;margin-bottom:3px;font-size:10px">${def.name}</button>`;
+    });
+    html += `<button class="act-btn" onclick="closeModal()" style="width:100%;padding:6px;margin-top:4px">Отмена</button>`;
+    openModal(`💊 ${isEn ? 'Heal' : 'Лечение'}`, html);
+  } else if (msg.action === 'view_backpack') {
+    let html = `<div style="max-height:50vh;overflow-y:auto">`;
+    d.inventory.forEach(item => {
+      const def = ITEMS[item.id];
+      if (!def) return;
+      html += `<div class="inv-item" style="padding:4px 6px"><div class="item-info">${typeof itemIconHtml==='function'?itemIconHtml(item.id,18):''}<span style="font-size:10px">${def.name}${item.qty>1?' ×'+item.qty:''}</span></div></div>`;
+    });
+    html += `</div>`;
+    html += `<button class="act-btn" onclick="closeModal()" style="width:100%;padding:6px;margin-top:6px">OK</button>`;
+    openModal(`🎒 ${d.name}`, html);
+  }
+}
+
+function doHealPlayer(targetId, medId) {
+  // Remove medicine from our inventory, notify target to heal
+  removeItem(medId, 1);
+  const msg = { t:'e', e:'remote_heal', targetId, medId, fromName: G?.characterName || 'Player' };
+  if (Net.mode === 'HOST') Net.send(targetId, msg);
+  else Net.send(null, msg);
+  addLog(`💊 Использовано ${ITEMS[medId]?.name} на другом игроке`, 'success');
 }
 
 function joinCombat() {

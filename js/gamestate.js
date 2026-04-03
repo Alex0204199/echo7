@@ -2938,6 +2938,7 @@ function showLootPicker(room, containerIdx, staggered) {
     if (cont.loot && cont.loot.length > 0) {
       cont.loot.forEach((item, i) => {
         if (item.id === 'note') return;
+        if (item._taking || item._taken) return; // being taken by another player
         availableLoot.push({ source: 'container', containerIdx, idx: i, item });
       });
     }
@@ -3038,14 +3039,19 @@ function takeLootItem(source, containerIdx, idx) {
   }
   if (!targetItem) return;
 
+  // Mark item as being taken immediately (anti-dupe)
+  targetItem._taking = true;
   const itemName = ITEMS[targetItem.id]?.name || targetItem.id;
   startTimedAction(`Подбираю: ${itemName}`, 1, () => {
-    // Re-validate after timer (item may have been taken)
     let item;
     if (source === 'container') {
       const cont = room.containers && room.containers[containerIdx];
-      if (!cont || !cont.loot || idx >= cont.loot.length) { addLog('Предмет уже забран.', 'warning'); return; }
-      item = cont.loot.splice(idx, 1)[0];
+      if (!cont || !cont.loot) { addLog('Предмет уже забран.', 'warning'); return; }
+      // Find by reference (not index — index shifts when others take items)
+      const realIdx = cont.loot.indexOf(targetItem);
+      if (realIdx < 0 || targetItem._taken) { addLog('Предмет уже забран другим игроком.', 'warning'); return; }
+      targetItem._taken = true;
+      item = cont.loot.splice(realIdx, 1)[0];
     } else if (source === 'loot') {
       if (!room.loot || idx >= room.loot.length) return;
       item = room.loot.splice(idx, 1)[0];
@@ -3054,17 +3060,17 @@ function takeLootItem(source, containerIdx, idx) {
       item = room.floor.splice(idx, 1)[0];
     }
     if (!item) return;
-    addItem(item.id, item.qty || 1, { durability: item.durability, freshDays: item.freshDays, loadedAmmo: item.loadedAmmo, insertedMag: item.insertedMag, keyId: item.keyId, keyName: item.keyName });
-    const itemName = item.keyName || ITEMS[item.id]?.name || item.id;
-    addLog(`Подобрано: ${itemName}`, 'success');
-    playSound('pickup');
-    if (typeof showLootAnimation === 'function') showLootAnimation(itemName);
-    calcWeight();
+    // Broadcast BEFORE adding to inventory (so others see removal instantly)
     if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
       Net.markDirty(G.world.currentNodeId);
-      // Immediate broadcast: item taken from container
       Net.broadcast({ t:'e', e:'loot_taken', nodeId:G.world.currentNodeId, roomIdx:G.world.currentRoom, ci:containerIdx, itemId:item.id, source });
     }
+    addItem(item.id, item.qty || 1, { durability: item.durability, freshDays: item.freshDays, loadedAmmo: item.loadedAmmo, insertedMag: item.insertedMag, keyId: item.keyId, keyName: item.keyName });
+    const itemName2 = item.keyName || ITEMS[item.id]?.name || item.id;
+    addLog(`Подобрано: ${itemName2}`, 'success');
+    playSound('pickup');
+    if (typeof showLootAnimation === 'function') showLootAnimation(itemName2);
+    calcWeight();
     if (source === 'container') showLootPicker(room, containerIdx);
     else if (source === 'floor') showLootPicker(room, -1);
     else showLootPicker(room);
