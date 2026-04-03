@@ -5724,17 +5724,17 @@ function showMap() {
   html += '<div id="map-controls" style="flex-shrink:0;padding-top:5px">';
 
   // Info panel
-  html += '<div id="map-info" style="padding:4px 6px;font-size:10px;color:var(--text-dim);min-height:30px;border:1px solid var(--border);border-radius:3px;background:rgba(0,10,0,.6)"></div>';
+  html += '<div id="map-info" style="padding:3px 6px;font-size:9px;color:var(--text-dim);min-height:22px;border:1px solid var(--border);border-radius:3px;background:rgba(0,10,0,.6);overflow:hidden;text-overflow:ellipsis"></div>';
 
-  // Controls row
-  html += '<div style="display:flex;gap:3px;margin-top:4px">';
-  const icsz = 22;
-  html += `<button class="act-btn" onclick="mapZoom(1)" style="min-height:30px;flex:1;padding:2px">${mapIconHtml('zoom_in',icsz)}</button>`;
-  html += `<button class="act-btn" onclick="mapZoom(-1)" style="min-height:30px;flex:1;padding:2px">${mapIconHtml('zoom_out',icsz)}</button>`;
-  html += `<button class="act-btn" onclick="mapCenter()" style="min-height:30px;flex:1;padding:2px">${mapIconHtml('center',icsz)}</button>`;
-  html += `<button class="act-btn" id="map-xray-btn" onclick="toggleMapXray()" style="min-height:30px;flex:1;padding:2px${mapState.xray?';border-color:var(--cyan);background:rgba(0,229,255,.12)':''}">${mapIconHtml('xray',icsz)}</button>`;
-  html += `<button class="act-btn" id="map-scout-btn" onclick="doScout()" style="min-height:30px;flex:1;padding:2px;border-color:var(--cyan)">${mapIconHtml('scout',icsz)}</button>`;
-  html += `<button class="act-btn" id="map-go-btn" onclick="mapGo()" style="min-height:30px;flex:2;display:none;padding:2px;border-color:var(--green);background:rgba(0,255,65,.15)">${mapIconHtml('go',icsz)}</button>`;
+  // Controls row — compact for mobile
+  html += '<div style="display:flex;gap:2px;margin-top:3px;flex-wrap:wrap">';
+  const icsz = 18;
+  html += `<button class="act-btn" onclick="mapZoom(1)" style="min-height:28px;flex:1;min-width:36px;padding:1px">${mapIconHtml('zoom_in',icsz)}</button>`;
+  html += `<button class="act-btn" onclick="mapZoom(-1)" style="min-height:28px;flex:1;min-width:36px;padding:1px">${mapIconHtml('zoom_out',icsz)}</button>`;
+  html += `<button class="act-btn" onclick="mapCenter()" style="min-height:28px;flex:1;min-width:36px;padding:1px">${mapIconHtml('center',icsz)}</button>`;
+  html += `<button class="act-btn" id="map-xray-btn" onclick="toggleMapXray()" style="min-height:28px;flex:1;min-width:36px;padding:1px${mapState.xray?';border-color:var(--cyan);background:rgba(0,229,255,.12)':''}">${mapIconHtml('xray',icsz)}</button>`;
+  html += `<button class="act-btn" id="map-scout-btn" onclick="doScout()" style="min-height:28px;flex:1;min-width:36px;padding:1px;border-color:var(--cyan)">${mapIconHtml('scout',icsz)}</button>`;
+  html += `<button class="act-btn" id="map-go-btn" onclick="mapGo()" style="min-height:28px;flex:2;min-width:70px;display:none;padding:1px;border-color:var(--green);background:rgba(0,255,65,.15);font-size:10px">${mapIconHtml('go',icsz)} ИДТИ</button>`;
   html += '</div>';
 
   // Scout progress bar
