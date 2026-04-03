@@ -3455,6 +3455,10 @@ function travelRegion(ri) {
 // ── COMBAT ──
 function startCombat(zombie, room) {
   Bus.emit('combat:start', { nodeId: G.world.currentNodeId, roomIdx: G.world.currentRoom });
+  // Broadcast combat to other players in same location
+  if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
+    Net.broadcast({ t:'e', e:'combat_started', nodeId:G.world.currentNodeId, roomIdx:G.world.currentRoom, zombie:{ name:zombie.name, hp:zombie.hp, currentHp:zombie.currentHp, dmg:zombie.dmg, type:zombie.type } });
+  }
   if (G.creative) {
     addLog('Креатив: бой пропущен, зомби уничтожены.', 'success');
     // Award kills without combat
@@ -3765,6 +3769,10 @@ function combatAttack() {
     if (isCrit) dmg *= 1.8;
     dmg = Math.round(dmg);
     z.currentHp -= dmg;
+    // Broadcast damage to co-op players
+    if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
+      Net.broadcast({ t:'e', e:'combat_damage', nodeId:G.world.currentNodeId, roomIdx:G.world.currentRoom, zombieHp:z.currentHp, dmg, attackerName:G.characterName });
+    }
     const noiseAdd = w.noise || 15;
     addNoise(noiseAdd);
     const verb = isFirearm ? 'Выстрел!' : 'Удар!';

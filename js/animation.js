@@ -988,10 +988,15 @@ function _animLoopInner() {
   // ══════════════════════════════════════
   // REMOTE PLAYERS (cyan circles — same node + room only)
   // ══════════════════════════════════════
+  let _rpIdx = 0;
   Object.entries(sceneData.remotePlayers).forEach(([rpId, rp]) => {
     if (!rp || rp.nodeId !== G?.world?.currentNodeId || rp.roomIdx !== G?.world?.currentRoom) return;
-    const rpSX = rp.x - sceneData.camX + w / 2;
-    const rpSY = rp.y - sceneData.camY + h / 2;
+    _rpIdx++;
+    // Small offset so players don't overlap when at same position
+    const offsetAngle = (_rpIdx * 2.1) % (Math.PI * 2);
+    const offsetDist = 12;
+    const rpSX = rp.x - sceneData.camX + w / 2 + Math.cos(offsetAngle) * offsetDist;
+    const rpSY = rp.y - sceneData.camY + h / 2 + Math.sin(offsetAngle) * offsetDist;
     // Skip if off screen
     if (rpSX < -50 || rpSX > w + 50 || rpSY < -50 || rpSY > h + 50) return;
 

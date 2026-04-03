@@ -272,14 +272,22 @@ function updateUI() {
     actionsEl.appendChild(btn);
   });
 
-  // Emote button in multiplayer
+  // Multiplayer buttons
   if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
+    // Emote
     const emBtn = document.createElement('button');
     emBtn.className = 'act-btn';
-    emBtn.style.cssText = 'border-color:var(--cyan);color:var(--cyan);max-width:44px';
+    emBtn.style.cssText = 'border-color:var(--cyan);color:var(--cyan);max-width:40px';
     emBtn.innerHTML = '😀';
     emBtn.onclick = () => toggleEmoteMenu();
     actionsEl.appendChild(emBtn);
+    // Social (trade, party)
+    const soBtn = document.createElement('button');
+    soBtn.className = 'act-btn';
+    soBtn.style.cssText = 'border-color:var(--cyan);color:var(--cyan);max-width:40px';
+    soBtn.innerHTML = '🤝';
+    soBtn.onclick = () => showSocialMenu();
+    actionsEl.appendChild(soBtn);
   }
 
   if (G.creative) {

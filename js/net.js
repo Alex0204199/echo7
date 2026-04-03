@@ -390,6 +390,16 @@ const Net = {
       case 'loot_deny':
         if (this.mode === 'CLIENT') addLog(msg.reason || 'Контейнер занят', 'warning');
         break;
+      case 'join_combat':
+        if (this.mode === 'HOST' && G) {
+          // Find active zombie in the room
+          const jcNode = G.world.nodes[msg.nodeId];
+          const jcRoom = jcNode?.building?.rooms?.[msg.roomIdx];
+          if (jcRoom?.zombies) {
+            this.send(senderId, { t:'e', e:'combat_started', nodeId:msg.nodeId, roomIdx:msg.roomIdx, zombie:{ name:jcRoom.zombies.name, hp:jcRoom.zombies.hp, currentHp:jcRoom.zombies.currentHp, dmg:jcRoom.zombies.dmg, type:jcRoom.zombies.type } });
+          }
+        }
+        break;
       case 'node_searched':
         if (G?.world?.nodes?.[msg.nodeId]) G.world.nodes[msg.nodeId].searched = true;
         break;
@@ -425,6 +435,50 @@ const Net = {
           addLog(`📡 Убежище обновлено`, 'info');
         }
         break;
+      case 'combat_started': {
+        // Another player started combat at same location — offer to assist
+        if (msg.nodeId === G?.world?.currentNodeId) {
+          addLog(`⚔ Бой начался! ${msg.zombie?.name} атакует!`, 'danger');
+          // If we're not already in combat, offer to join
+          if (!G.combatState) {
+            const isEn = LANG?.current === 'en';
+            const z = msg.zombie;
+            let cHtml = `<div style="text-align:center;padding:8px">`;
+            cHtml += `<div style="color:var(--red);font-size:14px;margin-bottom:6px">⚔ ${z.name}</div>`;
+            cHtml += `<div style="color:var(--text-dim);font-size:10px;margin-bottom:10px">HP: ${z.currentHp}/${z.hp} · ${isEn ? 'Nearby player is fighting!' : 'Другой игрок сражается!'}</div>`;
+            cHtml += `<div style="display:flex;gap:6px">`;
+            cHtml += `<button class="act-btn danger" onclick="joinCombat()" style="flex:2;padding:10px">⚔ ${isEn ? 'JOIN FIGHT' : 'ВСТУПИТЬ В БОЙ'}</button>`;
+            cHtml += `<button class="act-btn" onclick="closeModal()" style="flex:1;padding:10px">${isEn ? 'Ignore' : 'Нет'}</button>`;
+            cHtml += `</div></div>`;
+            openModal('⚔ ' + (isEn ? 'Combat' : 'Бой'), cHtml);
+          }
+        }
+        break;
+      }
+      case 'combat_damage': {
+        // Someone dealt damage to zombie — update local combat state
+        if (G?.combatState?.zombie && msg.nodeId === G.world.currentNodeId) {
+          G.combatState.zombie.currentHp = Math.max(0, msg.zombieHp);
+          if (typeof showCombatUI === 'function' && G.combatState) showCombatUI();
+          if (msg.zombieHp <= 0) {
+            addLog(`${G.combatState.zombie.name} уничтожен совместными усилиями!`, 'success');
+            if (typeof combatVictory === 'function') combatVictory();
+          }
+        }
+        break;
+      }
+      case 'party_invite': {
+        const pFromName = msg.fromName || msg.fromId;
+        const isEn = LANG?.current === 'en';
+        let piHtml = `<div style="text-align:center;padding:10px">`;
+        piHtml += `<div style="font-size:14px;color:var(--cyan);margin-bottom:8px">${pFromName} ${isEn ? 'invites you to a party' : 'приглашает в группу'}</div>`;
+        piHtml += `<div style="display:flex;gap:8px;justify-content:center">`;
+        piHtml += `<button class="act-btn" onclick="closeModal();addLog('👥 Вы в группе!','success')" style="flex:1;padding:10px;border-color:var(--green);color:var(--green)">${isEn ? 'Accept' : 'Принять'}</button>`;
+        piHtml += `<button class="act-btn" onclick="closeModal()" style="flex:1;padding:10px;border-color:var(--red);color:var(--red)">${isEn ? 'Decline' : 'Отклонить'}</button>`;
+        piHtml += `</div></div>`;
+        openModal('👥 ' + (isEn ? 'Party' : 'Группа'), piHtml);
+        break;
+      }
       case 'trade_request':
         if (msg.targetId && msg.targetId !== Net.localId && Net.mode === 'HOST') {
           // Host relays to target
@@ -587,27 +641,90 @@ function showTradeRequest(fromId) {
   openModal('🤝 ' + (isEn ? 'Trade' : 'Обмен'), html);
 }
 
-function initiateTrade() {
-  // Find nearby player (same node)
+// ── Social Menu (nearby players) ──
+function showSocialMenu() {
   const myNode = G?.world?.currentNodeId;
-  const nearby = Object.entries(Net.players).find(([id, p]) => id !== Net.localId && p.nodeId === myNode);
-  if (!nearby) { addLog('Нет игроков рядом для обмена.', 'warning'); return; }
-  const [targetId, targetInfo] = nearby;
-  addLog(`📡 Запрос обмена с ${targetInfo.name}...`, 'info');
-  const msg = { t: 'e', e: 'trade_request', fromId: Net.localId, fromName: G?.characterName || 'Player' };
+  const isEn = LANG?.current === 'en';
+  const nearby = Object.entries(Net.players).filter(([id, p]) => id !== Net.localId && p.nodeId === myNode);
+
+  if (nearby.length === 0) {
+    addLog(isEn ? 'No players nearby.' : 'Нет игроков рядом.', 'warning');
+    return;
+  }
+
+  let html = '';
+  html += `<div style="color:var(--text-dim);font-size:10px;margin-bottom:8px">${isEn ? 'Players at your location' : 'Игроки в вашей локации'}:</div>`;
+
+  nearby.forEach(([id, info]) => {
+    html += `<div style="border:1px solid rgba(0,229,255,.2);border-radius:4px;padding:8px;margin-bottom:6px;background:rgba(0,229,255,.03)">`;
+    html += `<div style="color:var(--cyan);font-size:12px;font-weight:bold;margin-bottom:6px">● ${info.name || id}</div>`;
+    html += `<div style="display:flex;gap:4px;flex-wrap:wrap">`;
+    html += `<button class="act-btn" onclick="requestTrade('${id}')" style="flex:1;padding:6px;font-size:9px;border-color:var(--green);color:var(--green)">🔄 ${isEn ? 'Trade' : 'Обмен'}</button>`;
+    html += `<button class="act-btn" onclick="inviteToParty('${id}')" style="flex:1;padding:6px;font-size:9px;border-color:var(--cyan);color:var(--cyan)">👥 ${isEn ? 'Party' : 'В группу'}</button>`;
+    html += `<button class="act-btn" onclick="assistPlayer('${id}')" style="flex:1;padding:6px;font-size:9px">⚔ ${isEn ? 'Assist' : 'Помочь'}</button>`;
+    html += `</div></div>`;
+  });
+
+  html += `<button class="act-btn" onclick="closeModal()" style="width:100%;padding:8px;margin-top:4px">${isEn ? 'Close' : 'Закрыть'}</button>`;
+  openModal('🤝 ' + (isEn ? 'Social' : 'Социум'), html);
+}
+
+function requestTrade(targetId) {
+  const targetName = Net.players[targetId]?.name || targetId;
+  addLog(`📡 Запрос обмена с ${targetName}...`, 'info');
+  const msg = { t:'e', e:'trade_request', fromId:Net.localId, fromName:G?.characterName||'Player' };
   if (Net.mode === 'HOST') Net.send(targetId, msg);
   else Net.send(null, { ...msg, targetId });
+  closeModal();
+}
+
+function showTradeRequest(fromId) {
+  const fromName = Net.players[fromId]?.name || fromId;
+  const isEn = LANG?.current === 'en';
+  let html = `<div style="text-align:center;padding:10px">`;
+  html += `<div style="font-size:14px;color:var(--cyan);margin-bottom:8px">${fromName} ${isEn ? 'wants to trade' : 'предлагает обмен'}</div>`;
+  html += `<div style="display:flex;gap:8px;justify-content:center">`;
+  html += `<button class="act-btn" onclick="acceptTrade('${fromId}')" style="flex:1;padding:10px;border-color:var(--green);color:var(--green)">${isEn ? 'Accept' : 'Принять'}</button>`;
+  html += `<button class="act-btn" onclick="closeModal()" style="flex:1;padding:10px;border-color:var(--red);color:var(--red)">${isEn ? 'Decline' : 'Отклонить'}</button>`;
+  html += `</div></div>`;
+  openModal('🤝 ' + (isEn ? 'Trade' : 'Обмен'), html);
 }
 
 function acceptTrade(fromId) {
   closeModal();
-  addLog('🤝 Обмен принят! (функция в разработке)', 'success');
-  // TODO: open trade UI with both inventories
+  addLog('🤝 Обмен принят! (в разработке)', 'success');
 }
 
-function declineTrade(fromId) {
+function inviteToParty(targetId) {
+  const targetName = Net.players[targetId]?.name || targetId;
+  addLog(`👥 Приглашение в группу отправлено: ${targetName}`, 'info');
+  const msg = { t:'e', e:'party_invite', fromId:Net.localId, fromName:G?.characterName||'Player' };
+  if (Net.mode === 'HOST') Net.send(targetId, msg);
+  else Net.send(null, { ...msg, targetId });
   closeModal();
-  addLog('Обмен отклонён.', 'info');
+}
+
+function assistPlayer(targetId) {
+  closeModal();
+  joinCombat();
+}
+
+function joinCombat() {
+  closeModal();
+  // Find the active combat zombie from the broadcast
+  if (G.combatState) { addLog('Вы уже в бою!', 'warning'); return; }
+  // Request combat state from host
+  addLog('⚔ Вступаешь в бой!', 'danger');
+  const msg = { t:'e', e:'join_combat', nodeId: G.world.currentNodeId, roomIdx: G.world.currentRoom };
+  if (Net.mode === 'HOST') {
+    // Host already has combat — find zombie in room
+    const room = currentRoom();
+    if (room?.zombies) {
+      startCombat(room.zombies, room);
+    }
+  } else {
+    Net.send(null, msg);
+  }
 }
 
 // ── Wire Bus events to network ──
