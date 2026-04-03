@@ -241,20 +241,35 @@ const Net = {
     }
   },
 
+  // Store disconnected players for reconnect
+  _disconnectedPlayers: {},
+
   _onPlayerJoin(playerId, msg) {
     const playerInfo = { name: msg.name, nodeId: null, roomIdx: -1, x: 0, y: 0, dir: 2 };
     this.players[playerId] = playerInfo;
+
     if (G) {
-      G.players[playerId] = {
-        hp:{head:100,torso:100,armL:100,armR:100,legL:100,legR:100},
-        moodles:{hunger:0,thirst:0,fatigue:0,noise:0,infection:0,bleeding:0,pain:0,panic:0,depression:0,bodyTemp:36.6,wetness:0,illness:0},
-        equipment:{head:null,face:null,torso:null,armor:null,rig:null,gloves:null,legs:null,feet:null,back:null},
-        skills:{strength:0,stealth:0,scouting:0,firstAid:0,mechanics:0,cooking:0,lockpicking:0,firearms:0},
-        skillXp:{strength:0,stealth:0,scouting:0,firstAid:0,mechanics:0,cooking:0,lockpicking:0,firearms:0},
-        inventory:[{id:'water',qty:1,durability:0,freshDays:999}],
-        equipped:'fist',weaponSlot1:null,weaponSlot2:null,activeSlot:1,
-        stealthMode:false,weight:0,alive:true,daysSurvived:0,quickSlots:[null,null,null],
-      };
+      // Check if this player reconnected (has saved data from previous session)
+      // Match by name since playerId changes each connection
+      const reconnectKey = Object.keys(this._disconnectedPlayers).find(k => this._disconnectedPlayers[k]?.name === msg.name);
+      if (reconnectKey && this._disconnectedPlayers[reconnectKey]) {
+        // Restore saved player data!
+        G.players[playerId] = this._disconnectedPlayers[reconnectKey].playerData;
+        delete this._disconnectedPlayers[reconnectKey];
+        addLog(`📡 ${msg.name} переподключился! Прогресс восстановлен.`, 'success');
+      } else {
+        // New player — fresh data
+        G.players[playerId] = {
+          hp:{head:100,torso:100,armL:100,armR:100,legL:100,legR:100},
+          moodles:{hunger:0,thirst:0,fatigue:0,noise:0,infection:0,bleeding:0,pain:0,panic:0,depression:0,bodyTemp:36.6,wetness:0,illness:0},
+          equipment:{head:null,face:null,torso:null,armor:null,rig:null,gloves:null,legs:null,feet:null,back:null},
+          skills:{strength:0,stealth:0,scouting:0,firstAid:0,mechanics:0,cooking:0,lockpicking:0,firearms:0},
+          skillXp:{strength:0,stealth:0,scouting:0,firstAid:0,mechanics:0,cooking:0,lockpicking:0,firearms:0},
+          inventory:[{id:'water',qty:1,durability:0,freshDays:999}],
+          equipped:'fist',weaponSlot1:null,weaponSlot2:null,activeSlot:1,
+          stealthMode:false,weight:0,alive:true,daysSurvived:0,quickSlots:[null,null,null],
+        };
+      }
     }
     // Build world delta
     const worldDelta = {};
@@ -271,11 +286,14 @@ const Net = {
       const gate = Object.values(G.world.nodes).find(n => n.type === 'npc_gate');
       spawnId = gate?.id || G.world.currentNodeId;
     }
+    // Check if reconnected (name match in disconnected players)
+    const isReconnect = Object.values(this._disconnectedPlayers).some(d => d.name === msg.name);
     this.send(playerId, {
       t:'J', id:playerId, seed:G?.seed, difficulty:G?.difficulty,
       time:G?{...G.time}:{day:1,hour:8,minute:0},
       weather:G?.world?.weather||'clear', season:G?.world?.season||'summer', temp:G?.world?.outsideTemp||20,
       players:{...this.players}, spawnNodeId:spawnId, worldDelta,
+      reconnected: isReconnect,
     });
     sceneData.remotePlayers[playerId] = { ...playerInfo, color: '#00E5FF' };
     this.broadcast({ t:'player_join', id:playerId, player:playerInfo });
@@ -596,7 +614,7 @@ const Net = {
         break;
       case 'trade_offer_update':
         if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); }
-        else if (_tradeState) { _tradeState.theirOffer = msg.offer || []; _tradeState.theirConfirm = false; _showTradeUI(); }
+        else if (_tradeState) { _tradeState.theirOffer = msg.offer || []; _tradeState.theirConfirm = false; _tradeState.myConfirm = false; _showTradeUI(); }
         break;
       case 'trade_confirm':
         if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') { Net.send(msg.targetId, msg); }
@@ -628,6 +646,16 @@ const Net = {
 
   _onPlayerDisconnect(playerId) {
     const name = this.players[playerId]?.name || playerId;
+    // Save player data for reconnect (by name)
+    if (G?.players?.[playerId]) {
+      this._disconnectedPlayers[playerId] = {
+        name,
+        playerData: JSON.parse(JSON.stringify(G.players[playerId])),
+        disconnectTime: Date.now(),
+      };
+      // Auto-delete after 30 minutes
+      setTimeout(() => { delete this._disconnectedPlayers[playerId]; }, 30 * 60 * 1000);
+    }
     delete this.players[playerId];
     delete sceneData.remotePlayers[playerId];
     if (G?.players?.[playerId]) delete G.players[playerId];
@@ -908,6 +936,9 @@ function _tradeRemoveMy(idx) {
 
 function _tradeConfirm() {
   if (!_tradeState) return;
+  if (_tradeState.myOffer.length === 0 && _tradeState.theirOffer.length === 0) {
+    addLog('Добавьте предметы для обмена!', 'warning'); return;
+  }
   _tradeState.myConfirm = true;
   const msg = { t:'e', e:'trade_confirm', targetId: _tradeState.partnerId, fromId: Net.localId };
   if (Net.mode === 'HOST') Net.send(_tradeState.partnerId, msg);
@@ -1280,28 +1311,54 @@ function stopFollow() {
   }
 }
 
-// Auto-follow: when leader moves, follower follows
+// Auto-follow: track leader's movement
+let _followLastNode = null;
+let _followLastRoom = null;
+let _followAutoMove = false;
+
+// Don't cancel follow on auto-move — only on manual move
 Bus.on('player:move', (data) => {
-  // If someone follows us — they'll get the movement via position sync
-  // If WE are following someone — our own move cancels following
-  if (_followTarget && data.nodeId) stopFollow();
+  if (_followTarget && !_followAutoMove) stopFollow();
 });
 
-// Check if we should auto-move to follow target
 function _checkFollow() {
   if (!_followTarget || !G) return;
   const leader = Net.players[_followTarget];
-  if (!leader?.nodeId || leader.nodeId === G.world.currentNodeId) return;
-  // Leader moved to a different node — auto follow
-  const targetNode = G.world.nodes[leader.nodeId];
-  if (targetNode && typeof startRoute === 'function') {
-    // Build route to leader's node
-    _followTarget = _followTarget; // keep following
-    startRoute(leader.nodeId);
+  if (!leader?.nodeId) return;
+
+  // Follow to same node (map movement)
+  if (leader.nodeId !== G.world.currentNodeId && leader.nodeId !== _followLastNode) {
+    _followLastNode = leader.nodeId;
+    const targetNode = G.world.nodes[leader.nodeId];
+    if (targetNode && typeof startRoute === 'function') {
+      _followAutoMove = true;
+      startRoute(leader.nodeId);
+      setTimeout(() => { _followAutoMove = false; }, 500);
+    }
+  }
+
+  // Follow to same room (inside building)
+  if (leader.nodeId === G.world.currentNodeId && leader.roomIdx >= 0 && leader.roomIdx !== G.world.currentRoom && leader.roomIdx !== _followLastRoom) {
+    _followLastRoom = leader.roomIdx;
+    // Auto-enter the same room
+    G.world.currentRoom = leader.roomIdx;
+    const loc = currentLocation();
+    if (loc?.rooms?.[leader.roomIdx]) {
+      const rm = loc.rooms[leader.roomIdx];
+      addLog(`👣 Следую в: ${rm.name}`, 'info');
+      if (typeof enterRoom === 'function') enterRoom(leader.roomIdx);
+      else {
+        const layout = typeof getLocationLayout === 'function' ? getLocationLayout(loc) : null;
+        if (layout?.rooms?.[leader.roomIdx]) {
+          const lr = layout.rooms[leader.roomIdx];
+          sceneData.playerX = lr.cx; sceneData.playerY = lr.cy;
+          sceneData.camX = lr.cx; sceneData.camY = lr.cy;
+        }
+      }
+    }
   }
 }
-// Check follow every 2 seconds
-setInterval(_checkFollow, 2000);
+setInterval(_checkFollow, 1500);
 
 // ── Map Markers for Group ──
 let _mapMarkers = []; // { x, y (grid), label, color, time }
