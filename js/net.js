@@ -152,13 +152,14 @@ const Net = {
   },
 
   sendPosition(x, y, dir, nodeId, roomIdx) {
+    if (!this.ws || this.ws.readyState !== 1) return;
     const now = Date.now();
     if (now - this._lastPosSend < this._posInterval) return;
     this._lastPosSend = now;
     // x,y are normalized (0..1) — send with 4 decimal precision
     const msg = { t: 'p', x: +x.toFixed(4), y: +y.toFixed(4), d: dir, n: nodeId, r: roomIdx };
     if (this.mode === 'HOST') {
-      // Store denormalized for local rendering
+      if (!this.players[this.localId]) return; // not ready yet
       const _cw = (typeof canvas !== 'undefined' && canvas) ? canvas.width / window.devicePixelRatio : 400;
       const _ch = (typeof canvas !== 'undefined' && canvas) ? canvas.height / window.devicePixelRatio : 400;
       this.players[this.localId].x = x * _cw;
