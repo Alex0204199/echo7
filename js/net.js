@@ -481,11 +481,15 @@ const Net = {
         }
         break;
       case 'social_denied':
-        addLog(LANG?.current==='en'?'Request denied.':'Запрос отклонён.', 'warning');
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') {
+          Net.send(msg.targetId, msg);
+        } else {
+          addLog(LANG?.current==='en'?'Request denied.':'Запрос отклонён.', 'warning');
+        }
         break;
       case 'social_response':
-        if (msg.fromId && msg.fromId !== Net.localId && this.mode === 'HOST') {
-          Net.send(msg.fromId, msg); // relay
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') {
+          Net.send(msg.targetId, msg);
         } else {
           _showSocialResponse(msg);
         }
@@ -508,23 +512,51 @@ const Net = {
         break;
       }
       case 'party_invite': {
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') {
+          Net.send(msg.targetId, msg); break;
+        }
         const pFromName = msg.fromName || msg.fromId;
         const isEn = LANG?.current === 'en';
         let piHtml = `<div style="text-align:center;padding:10px">`;
         piHtml += `<div style="font-size:14px;color:var(--cyan);margin-bottom:8px">${pFromName} ${isEn ? 'invites you to a party' : 'приглашает в группу'}</div>`;
         piHtml += `<div style="display:flex;gap:8px;justify-content:center">`;
-        piHtml += `<button class="act-btn" onclick="closeModal();addLog('👥 Вы в группе!','success')" style="flex:1;padding:10px;border-color:var(--green);color:var(--green)">${isEn ? 'Accept' : 'Принять'}</button>`;
+        piHtml += `<button class="act-btn" onclick="_acceptParty('${msg.fromId}')" style="flex:1;padding:10px;border-color:var(--green);color:var(--green)">${isEn ? 'Accept' : 'Принять'}</button>`;
         piHtml += `<button class="act-btn" onclick="closeModal()" style="flex:1;padding:10px;border-color:var(--red);color:var(--red)">${isEn ? 'Decline' : 'Отклонить'}</button>`;
         piHtml += `</div></div>`;
         openModal('👥 ' + (isEn ? 'Party' : 'Группа'), piHtml);
         break;
       }
+      case 'party_accepted': {
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') {
+          Net.send(msg.targetId, msg); break;
+        }
+        const paName = msg.fromName || msg.fromId;
+        if (!window._party.members.includes(Net.localId)) window._party.members.push(Net.localId);
+        if (!window._party.members.includes(msg.fromId)) window._party.members.push(msg.fromId);
+        window._party.leader = Net.localId;
+        addLog(`👥 ${paName} присоединился к группе!`, 'success');
+        break;
+      }
+      case 'map_marker': {
+        if (msg.marker) {
+          if (typeof _mapMarkers !== 'undefined') _mapMarkers.push(msg.marker);
+          addLog(`📍 ${msg.marker.label}`, 'info');
+          setTimeout(() => { if (typeof _mapMarkers !== 'undefined') _mapMarkers = _mapMarkers.filter(m => m !== msg.marker); }, 300000);
+        }
+        break;
+      }
+      case 'party_left': {
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') {
+          Net.send(msg.targetId, msg); break;
+        }
+        window._party.members = window._party.members.filter(id => id !== msg.fromId);
+        addLog(`👥 Игрок покинул группу`, 'info');
+        break;
+      }
       case 'trade_request':
-        if (msg.targetId && msg.targetId !== Net.localId && Net.mode === 'HOST') {
-          // Host relays to target
-          Net.send(msg.targetId, { t:'e', e:'trade_request', fromId: senderId, fromName: msg.fromName });
-        } else if (!msg.targetId || msg.fromId) {
-          // This is for us
+        if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') {
+          Net.send(msg.targetId, { t:'e', e:'trade_request', fromId: msg.fromId || senderId, fromName: msg.fromName });
+        } else if (msg.fromId) {
           showTradeRequest(msg.fromId);
         }
         break;
@@ -706,6 +738,9 @@ function showSocialMenu() {
     html += `<button class="act-btn" onclick="requestInspectHealth('${id}')" style="flex:1;padding:5px;font-size:8px">❤ ${isEn?'Health':'Здоровье'}</button>`;
     html += `<button class="act-btn" onclick="requestHealPlayer('${id}')" style="flex:1;padding:5px;font-size:8px;border-color:var(--green);color:var(--green)">💊 ${isEn?'Heal':'Лечить'}</button>`;
     html += `<button class="act-btn" onclick="requestViewBackpack('${id}')" style="flex:1;padding:5px;font-size:8px">🎒 ${isEn?'Backpack':'Рюкзак'}</button>`;
+    html += `</div><div style="display:flex;gap:3px;margin-top:3px">`;
+    html += `<button class="act-btn" onclick="followPlayer('${id}')" style="flex:1;padding:5px;font-size:8px">👣 ${isEn?'Follow':'Следовать'}</button>`;
+    html += `<button class="act-btn" onclick="showMarkerMenu()" style="flex:1;padding:5px;font-size:8px">📍 ${isEn?'Marker':'Маркер'}</button>`;
     html += `</div></div>`;
   });
 
@@ -739,13 +774,46 @@ function acceptTrade(fromId) {
   addLog('🤝 Обмен принят! (в разработке)', 'success');
 }
 
+// ── Party System ──
+if (!window._party) window._party = { members: [], leader: null };
+
 function inviteToParty(targetId) {
   const targetName = Net.players[targetId]?.name || targetId;
-  addLog(`👥 Приглашение в группу отправлено: ${targetName}`, 'info');
+  addLog(`👥 Приглашение в группу: ${targetName}`, 'info');
   const msg = { t:'e', e:'party_invite', fromId:Net.localId, fromName:G?.characterName||'Player' };
   if (Net.mode === 'HOST') Net.send(targetId, msg);
   else Net.send(null, { ...msg, targetId });
   closeModal();
+}
+
+function _acceptParty(fromId) {
+  closeModal();
+  const fromName = Net.players[fromId]?.name || fromId;
+  window._party.leader = fromId;
+  if (!window._party.members.includes(Net.localId)) window._party.members.push(Net.localId);
+  if (!window._party.members.includes(fromId)) window._party.members.push(fromId);
+  addLog(`👥 Вы в группе с ${fromName}!`, 'success');
+  // Notify leader
+  const msg = { t:'e', e:'party_accepted', fromId:Net.localId, fromName:G?.characterName||'Player' };
+  if (Net.mode === 'HOST') Net.send(fromId, msg);
+  else Net.send(null, { ...msg, targetId: fromId });
+}
+
+function isInParty(playerId) {
+  return window._party.members.includes(playerId);
+}
+
+function leaveParty() {
+  const members = [...window._party.members];
+  window._party = { members: [], leader: null };
+  addLog('👥 Вы покинули группу', 'info');
+  members.forEach(id => {
+    if (id !== Net.localId) {
+      const msg = { t:'e', e:'party_left', fromId:Net.localId };
+      if (Net.mode === 'HOST') Net.send(id, msg);
+      else Net.send(null, { ...msg, targetId: id });
+    }
+  });
 }
 
 function assistPlayer(targetId) {
@@ -808,68 +876,82 @@ function _handleSocialRequest(msg) {
 function _respondSocial(fromId, action, allowed) {
   closeModal();
   if (!allowed) {
-    const msg = { t:'e', e:'social_denied', action, fromId };
+    const msg = { t:'e', e:'social_denied', action, targetId: fromId };
     if (Net.mode === 'HOST') Net.send(fromId, msg);
     else Net.send(null, msg);
     return;
   }
-  // Send our data to the requester
   const p = G.player;
   let data = {};
   if (action === 'inspect_health') {
     data = { hp: {...p.hp}, moodles: {...p.moodles}, alive: p.alive, name: G.characterName };
   } else if (action === 'heal') {
-    data = { hp: {...p.hp}, name: G.characterName };
+    data = { hp: {...p.hp}, name: G.characterName, targetId: Net.localId };
   } else if (action === 'view_backpack') {
     data = { inventory: p.inventory.map(i => ({ id:i.id, qty:i.qty })), name: G.characterName };
   }
-  const msg = { t:'e', e:'social_response', action, fromId, data };
+  const msg = { t:'e', e:'social_response', action, targetId: fromId, data };
   if (Net.mode === 'HOST') Net.send(fromId, msg);
   else Net.send(null, msg);
 }
 
-// Display response from social action
 function _showSocialResponse(msg) {
   const isEn = LANG?.current === 'en';
   const d = msg.data;
+  if (!d) return;
+
   if (msg.action === 'inspect_health') {
     const partNames = { head:'Голова', torso:'Торс', armL:'Л.рука', armR:'П.рука', legL:'Л.нога', legR:'П.нога' };
     let html = `<div style="font-size:11px">`;
-    Object.entries(d.hp).forEach(([k, v]) => {
+    Object.entries(d.hp || {}).forEach(([k, v]) => {
       const col = v >= 80 ? 'var(--green)' : v >= 40 ? 'var(--yellow)' : 'var(--red)';
       html += `<div style="display:flex;justify-content:space-between;padding:2px 0"><span>${partNames[k]||k}</span><span style="color:${col}">${v}%</span></div>`;
     });
-    // Moodles
     const moodleNames = { hunger:'Голод', thirst:'Жажда', fatigue:'Усталость', infection:'Инфекция', pain:'Боль', bleeding:'Кровотеч.', bodyTemp:'Темп. тела' };
-    html += `<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:4px">`;
-    Object.entries(d.moodles).forEach(([k, v]) => {
-      if (!moodleNames[k] || (k !== 'bodyTemp' && v === 0)) return;
-      const display = k === 'bodyTemp' ? v.toFixed(1) + '°C' : Math.round(v) + '%';
-      html += `<div style="display:flex;justify-content:space-between;padding:1px 0;font-size:10px"><span style="color:var(--text-dim)">${moodleNames[k]}</span><span>${display}</span></div>`;
-    });
-    html += `</div></div>`;
-    html += `<button class="act-btn" onclick="closeModal()" style="width:100%;padding:6px;margin-top:6px">OK</button>`;
-    openModal(`❤ ${d.name}`, html);
-  } else if (action === 'heal') {
-    // Show our medicine list to choose what to use
-    const meds = G.player.inventory.filter(i => ITEMS[i.id]?.type === 'medicine');
-    let html = `<div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">${isEn ? 'Choose medicine for' : 'Выберите лекарство для'} ${d.name}:</div>`;
-    meds.forEach((m, i) => {
-      const def = ITEMS[m.id];
-      html += `<button class="act-btn" onclick="doHealPlayer('${msg.fromId}','${m.id}');closeModal()" style="width:100%;padding:6px;margin-bottom:3px;font-size:10px">${def.name}</button>`;
-    });
-    html += `<button class="act-btn" onclick="closeModal()" style="width:100%;padding:6px;margin-top:4px">Отмена</button>`;
-    openModal(`💊 ${isEn ? 'Heal' : 'Лечение'}`, html);
-  } else if (msg.action === 'view_backpack') {
-    let html = `<div style="max-height:50vh;overflow-y:auto">`;
-    d.inventory.forEach(item => {
-      const def = ITEMS[item.id];
-      if (!def) return;
-      html += `<div class="inv-item" style="padding:4px 6px"><div class="item-info">${typeof itemIconHtml==='function'?itemIconHtml(item.id,18):''}<span style="font-size:10px">${def.name}${item.qty>1?' ×'+item.qty:''}</span></div></div>`;
-    });
+    if (d.moodles) {
+      html += `<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:4px">`;
+      Object.entries(d.moodles).forEach(([k, v]) => {
+        if (!moodleNames[k] || (k !== 'bodyTemp' && v === 0)) return;
+        const display = k === 'bodyTemp' ? v.toFixed(1) + '°C' : Math.round(v) + '%';
+        html += `<div style="display:flex;justify-content:space-between;padding:1px 0;font-size:10px"><span style="color:var(--text-dim)">${moodleNames[k]}</span><span>${display}</span></div>`;
+      });
+      html += `</div>`;
+    }
     html += `</div>`;
     html += `<button class="act-btn" onclick="closeModal()" style="width:100%;padding:6px;margin-top:6px">OK</button>`;
-    openModal(`🎒 ${d.name}`, html);
+    openModal(`❤ ${d.name || '???'}`, html);
+
+  } else if (msg.action === 'heal') {
+    // Show OUR medicine list to use on the other player
+    const healTargetId = d.targetId || msg.targetId;
+    const meds = G.player.inventory.filter(i => ITEMS[i.id]?.type === 'medicine');
+    let html = `<div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">${isEn ? 'Choose medicine for' : 'Выберите лекарство для'} ${d.name || '???'}:</div>`;
+    if (meds.length === 0) {
+      html += `<div style="color:var(--red);font-size:10px;text-align:center;padding:10px">${isEn ? 'No medicine!' : 'Нет медикаментов!'}</div>`;
+    } else {
+      meds.forEach(m => {
+        const def = ITEMS[m.id];
+        if (!def) return;
+        html += `<button class="act-btn" onclick="doHealPlayer('${healTargetId}','${m.id}');closeModal()" style="width:100%;padding:6px;margin-bottom:3px;font-size:10px">${typeof itemIconHtml==='function'?itemIconHtml(m.id,16):''} ${def.name}</button>`;
+      });
+    }
+    html += `<button class="act-btn" onclick="closeModal()" style="width:100%;padding:6px;margin-top:4px">${isEn ? 'Cancel' : 'Отмена'}</button>`;
+    openModal(`💊 ${d.name || '???'}`, html);
+
+  } else if (msg.action === 'view_backpack') {
+    let html = `<div style="max-height:50vh;overflow-y:auto">`;
+    if (!d.inventory || d.inventory.length === 0) {
+      html += `<div style="color:var(--text-dim);text-align:center;padding:10px">${isEn ? 'Empty' : 'Пусто'}</div>`;
+    } else {
+      d.inventory.forEach(item => {
+        const def = ITEMS[item.id];
+        if (!def) return;
+        html += `<div class="inv-item" style="padding:4px 6px"><div class="item-info">${typeof itemIconHtml==='function'?itemIconHtml(item.id,18):''}<span style="font-size:10px">${def.name}${item.qty>1?' ×'+item.qty:''}</span></div></div>`;
+      });
+    }
+    html += `</div>`;
+    html += `<button class="act-btn" onclick="closeModal()" style="width:100%;padding:6px;margin-top:6px">OK</button>`;
+    openModal(`🎒 ${d.name || '???'}`, html);
   }
 }
 
@@ -880,6 +962,55 @@ function doHealPlayer(targetId, medId) {
   if (Net.mode === 'HOST') Net.send(targetId, msg);
   else Net.send(null, msg);
   addLog(`💊 Использовано ${ITEMS[medId]?.name} на другом игроке`, 'success');
+}
+
+// ── Follow System ──
+let _followTarget = null;
+
+function followPlayer(targetId) {
+  closeModal();
+  _followTarget = targetId;
+  const name = Net.players[targetId]?.name || targetId;
+  addLog(`👣 Следую за ${name}`, 'info');
+}
+
+function stopFollow() {
+  if (_followTarget) {
+    addLog('👣 Перестал следовать', 'info');
+    _followTarget = null;
+  }
+}
+
+// Check follow — called from Bus player:move
+Bus.on('player:move', () => { /* local player moved — stop following */ if (_followTarget) stopFollow(); });
+
+// ── Map Markers for Group ──
+let _mapMarkers = []; // { x, y (grid), label, color, time }
+
+function placeMapMarker(type) {
+  closeModal();
+  const node = G?.world?.nodes?.[G?.world?.currentNodeId];
+  if (!node) return;
+  const labels = { here: '📍 Сюда!', danger: '⚠ Опасно!', loot: '💰 Лут!', meet: '🤝 Встреча' };
+  const marker = { gx: node.gx, gy: node.gy, label: labels[type] || type, color: type === 'danger' ? '#ff2244' : '#00e5ff', time: Date.now() };
+  _mapMarkers.push(marker);
+  // Broadcast to party/all
+  Net.broadcast({ t:'e', e:'map_marker', marker });
+  addLog(`${marker.label} — маркер поставлен`, 'info');
+  // Auto-remove after 5 minutes
+  setTimeout(() => { _mapMarkers = _mapMarkers.filter(m => m !== marker); }, 300000);
+}
+
+function showMarkerMenu() {
+  const isEn = LANG?.current === 'en';
+  let html = '<div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:center">';
+  html += `<button class="act-btn" onclick="placeMapMarker('here')" style="padding:8px 12px;font-size:11px">📍 ${isEn?'Here':'Сюда'}</button>`;
+  html += `<button class="act-btn" onclick="placeMapMarker('danger')" style="padding:8px 12px;font-size:11px;border-color:var(--red);color:var(--red)">⚠ ${isEn?'Danger':'Опасно'}</button>`;
+  html += `<button class="act-btn" onclick="placeMapMarker('loot')" style="padding:8px 12px;font-size:11px;border-color:var(--green);color:var(--green)">💰 ${isEn?'Loot':'Лут'}</button>`;
+  html += `<button class="act-btn" onclick="placeMapMarker('meet')" style="padding:8px 12px;font-size:11px;border-color:var(--cyan);color:var(--cyan)">🤝 ${isEn?'Meet':'Встреча'}</button>`;
+  html += '</div>';
+  html += `<button class="act-btn" onclick="closeModal()" style="width:100%;padding:6px;margin-top:8px">${isEn?'Cancel':'Отмена'}</button>`;
+  openModal('📍 ' + (isEn ? 'Map Marker' : 'Маркер'), html);
 }
 
 function joinCombat() {

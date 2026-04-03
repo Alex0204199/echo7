@@ -330,6 +330,23 @@ function updateUI() {
     const pingMs = Net.ping || 0;
     const pingColor = pingMs < 100 ? 'var(--green)' : pingMs < 300 ? 'var(--yellow)' : 'var(--red)';
     mpEl.innerHTML = `<span style="color:var(--cyan);opacity:.6">📡 ${isHost ? 'HOST' : 'CLIENT'} · ${count} ${count === 1 ? 'игрок' : 'игроков'}</span>${pingMs > 0 ? ` <span style="color:${pingColor};opacity:.5">${pingMs}ms</span>` : ''}`;
+
+    // Party HUD — show party members' status
+    if (window._party?.members?.length > 1) {
+      let partyHtml = '';
+      window._party.members.forEach(pid => {
+        if (pid === Net.localId) return;
+        const pInfo = Net.players[pid];
+        if (!pInfo) return;
+        const name = pInfo.name || pid;
+        const sameNode = pInfo.nodeId === G?.world?.currentNodeId;
+        partyHtml += `<div style="display:flex;align-items:center;gap:4px;margin-top:2px;opacity:${sameNode?'0.8':'0.4'}">`;
+        partyHtml += `<span style="color:var(--cyan);font-size:7px">●</span>`;
+        partyHtml += `<span style="color:var(--text-dim);font-size:8px">${name}</span>`;
+        partyHtml += `</div>`;
+      });
+      if (partyHtml) mpEl.innerHTML += `<div style="margin-top:3px;border-top:1px solid rgba(0,229,255,.15);padding-top:2px">` + partyHtml + `</div>`;
+    }
   }
 
   // Check achievements every UI update

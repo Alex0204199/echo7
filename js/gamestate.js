@@ -7352,6 +7352,26 @@ function renderMapCanvas() {
     });
   }
 
+  // ── Map markers from party/group ──
+  if (typeof _mapMarkers !== 'undefined' && _mapMarkers.length > 0) {
+    _mapMarkers.forEach(m => {
+      const age = (Date.now() - m.time) / 300000; // 0..1 over 5 min
+      if (age > 1) return;
+      const mx = isoX(m.gx + 0.5, m.gy + 0.5);
+      const my = isoY(m.gx + 0.5, m.gy + 0.5) - halfTH * 2;
+      ctx.globalAlpha = 0.8 - age * 0.6;
+      ctx.fillStyle = m.color || '#00e5ff';
+      ctx.font = `${Math.max(10, 12 * z)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText(m.label, mx, my);
+      // Pulsing dot
+      const pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
+      ctx.globalAlpha = pulse * (1 - age);
+      ctx.beginPath(); ctx.arc(mx, my + 6, Math.max(3, 4 * z), 0, Math.PI * 2); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+  }
+
   updateMoveAnim();
   if (document.getElementById('map-canvas')) {
     if (mapState.animFrame) cancelAnimationFrame(mapState.animFrame);
