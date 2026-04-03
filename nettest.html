@@ -3,91 +3,71 @@
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ECHO-7 Network Test</title>
 <style>body{background:#000;color:#0f0;font:14px monospace;padding:20px}input{background:#111;color:#0f0;border:1px solid #0f0;padding:8px;font:inherit;width:200px}button{background:#111;color:#0f0;border:1px solid #0f0;padding:8px 16px;font:inherit;cursor:pointer;margin:4px}#log{white-space:pre-wrap;margin-top:20px;border:1px solid #333;padding:10px;max-height:60vh;overflow-y:auto}</style>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
-<h2>ECHO-7 Network Test</h2>
+<h2>ECHO-7 WebSocket Test</h2>
 <div>
-  <button onclick="doHost()">HOST (создать комнату)</button>
-  <button onclick="doJoin()">JOIN (подключиться)</button>
+  <button onclick="doHost()">HOST</button>
+  <button onclick="doJoin()">JOIN</button>
   <br><br>
-  <input id="code" placeholder="код комнаты (для join)">
+  <input id="code" placeholder="код комнаты">
 </div>
 <div id="log"></div>
 <script>
-const SRV = { host: 'echo7-signal.onrender.com', port: 443, secure: true, path: '/' };
-const ICE = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  // PeerJS built-in TURN (free, included with PeerJS)
-  { urls: 'turn:eu-0.turn.peerjs.com:3478', username: 'peerjs', credential: 'peerjsp' },
-  { urls: 'turn:us-0.turn.peerjs.com:3478', username: 'peerjs', credential: 'peerjsp' },
-];
+const SERVER = 'wss://echo7-signal.onrender.com';
+let ws = null;
 
 function log(msg) {
   const el = document.getElementById('log');
   el.textContent += new Date().toLocaleTimeString() + ' | ' + msg + '\n';
   el.scrollTop = el.scrollHeight;
-  console.log(msg);
 }
 
 function doHost() {
-  const id = '' + Math.floor(10000000 + Math.random() * 90000000);
-  log('Creating host with ID: ' + id);
-  log('Server: ' + SRV.host + ':' + SRV.port + SRV.path);
+  const code = '' + Math.floor(10000000 + Math.random() * 90000000);
+  document.getElementById('code').value = code;
+  log('Connecting to server...');
 
-  const peer = new Peer(id, { ...SRV, debug: 3, config: { iceServers: ICE } });
-
-  peer.on('open', (myId) => {
-    log('✅ HOST READY! Code: ' + myId);
-    document.getElementById('code').value = myId;
-  });
-
-  peer.on('connection', (conn) => {
-    log('⚡ Someone connecting...');
-    conn.on('open', () => {
-      log('✅ CLIENT CONNECTED!');
-      conn.send({ msg: 'Hello from host!' });
-      conn.on('data', (data) => log('📩 From client: ' + JSON.stringify(data)));
-    });
-    conn.on('error', (e) => log('❌ Connection error: ' + e));
-  });
-
-  peer.on('error', (err) => log('❌ Host error: ' + err.type + ' - ' + err.message));
-  peer.on('disconnected', () => log('⚠ Disconnected from signaling'));
-  peer.on('close', () => log('⚠ Peer closed'));
+  ws = new WebSocket(SERVER);
+  ws.onopen = () => {
+    log('✅ WebSocket connected');
+    ws.send(JSON.stringify({ t: 'host', code, name: 'TestHost' }));
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    log('📩 ' + JSON.stringify(msg));
+    if (msg.t === 'hosted') log('✅ ROOM CREATED: ' + msg.code);
+    if (msg.t === 'join') log('⚡ PLAYER JOINED: ' + msg.name + ' (id: ' + msg.id + ')');
+    if (msg.t === 'fromclient') log('📩 From client: ' + JSON.stringify(msg.data));
+    if (msg.t === 'error') log('❌ ' + msg.error);
+  };
+  ws.onerror = (e) => log('❌ WebSocket error');
+  ws.onclose = () => log('⚠ WebSocket closed');
 }
 
 function doJoin() {
-  const roomCode = document.getElementById('code').value.trim();
-  if (!roomCode) { log('❌ Enter code first!'); return; }
+  const code = document.getElementById('code').value.trim();
+  if (!code) { log('❌ Enter code!'); return; }
+  log('Connecting to server...');
 
-  log('Connecting to signaling server...');
-  log('Server: ' + SRV.host + ':' + SRV.port + SRV.path);
-
-  const peer = new Peer({ ...SRV, debug: 3, config: { iceServers: ICE } });
-
-  peer.on('open', (myId) => {
-    log('✅ Connected to signaling as: ' + myId);
-    log('Connecting to host: ' + roomCode);
-
-    const conn = peer.connect(roomCode, { reliable: true });
-
-    conn.on('open', () => {
-      log('✅ CONNECTED TO HOST!');
-      conn.send({ msg: 'Hello from client!' });
-      conn.on('data', (data) => log('📩 From host: ' + JSON.stringify(data)));
-    });
-
-    conn.on('error', (e) => log('❌ Connection error: ' + e.type + ' ' + e.message));
-
-    setTimeout(() => {
-      if (!conn.open) log('⏰ Timeout — host not found after 15s');
-    }, 15000);
-  });
-
-  peer.on('error', (err) => log('❌ Client error: ' + err.type + ' - ' + err.message));
-  peer.on('disconnected', () => log('⚠ Disconnected from signaling'));
+  ws = new WebSocket(SERVER);
+  ws.onopen = () => {
+    log('✅ WebSocket connected');
+    ws.send(JSON.stringify({ t: 'join', code, name: 'TestClient' }));
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    log('📩 ' + JSON.stringify(msg));
+    if (msg.t === 'joined') {
+      log('✅ JOINED ROOM! My ID: ' + msg.id);
+      // Send test message to host
+      ws.send(JSON.stringify({ t: 'tohost', data: { hello: 'from client!' } }));
+    }
+    if (msg.t === 'fromhost') log('📩 From host: ' + JSON.stringify(msg.data));
+    if (msg.t === 'error') log('❌ ' + msg.error);
+  };
+  ws.onerror = (e) => log('❌ WebSocket error');
+  ws.onclose = () => log('⚠ WebSocket closed');
 }
 </script>
 </body>
