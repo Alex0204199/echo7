@@ -2828,7 +2828,17 @@ function doSearch() {
   });
 }
 
-function showContainerList(room) {
+function showContainerList(room, _replace) {
+  // MP: Unlock any container we were searching
+  if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
+    const myId = Net.localId;
+    (room.containers || []).forEach((c, ci) => {
+      if (c._searchingBy === myId) {
+        c._searchingBy = null;
+        Net.broadcast({ t:'e', e:'container_unlock', nodeId:G.world.currentNodeId, roomIdx:G.world.currentRoom, ci });
+      }
+    });
+  }
   const containers = room.containers || [];
   const hasFloorItems = room.floor && room.floor.length > 0;
 
@@ -2842,16 +2852,19 @@ function showContainerList(room) {
 
   containers.forEach((cont, ci) => {
     const isLocked = cont.locked && !cont.locked.unlocked;
-    const lootCount = cont.loot ? cont.loot.filter(l => l.id !== 'note').length : 0;
-    const statusColor = isLocked ? getLockColor(cont.locked.difficulty) : cont.searched ? (lootCount > 0 ? 'var(--yellow)' : 'var(--text-dim)') : 'var(--green)';
-    const statusText = isLocked ? `🔒 ${getLockLabel(cont.locked.difficulty)}` : cont.searched ? (lootCount > 0 ? `${lootCount} предм.` : 'Пусто') : '?';
-    const btnText = isLocked ? 'Взлом' : 'Обыскать';
-    html += `<div class="inv-item" style="cursor:pointer;border-left:2px solid ${statusColor};padding-left:6px" onclick="searchContainer(${ci})">
+    const myId = typeof Net !== 'undefined' ? Net.localId : 'local';
+    const isOccupied = cont._searchingBy && cont._searchingBy !== myId;
+    const lootCount = cont.loot ? cont.loot.filter(l => l.id !== 'note' && !l._taken && !l._taking).length : 0;
+    const statusColor = isOccupied ? '#ff8800' : isLocked ? getLockColor(cont.locked.difficulty) : cont.searched ? (lootCount > 0 ? 'var(--yellow)' : 'var(--text-dim)') : 'var(--green)';
+    const statusText = isOccupied ? '🔍 Занято другим игроком' : isLocked ? `🔒 ${getLockLabel(cont.locked.difficulty)}` : cont.searched ? (lootCount > 0 ? `${lootCount} предм.` : 'Пусто') : '?';
+    const btnText = isOccupied ? '🔒' : isLocked ? 'Взлом' : 'Обыскать';
+    const disabled = isOccupied ? 'pointer-events:none;opacity:.4' : '';
+    html += `<div class="inv-item" style="cursor:pointer;border-left:2px solid ${statusColor};padding-left:6px;${disabled}" onclick="${isOccupied?'':'searchContainer('+ci+')'}">
       <div>
         <div class="name">${cont.icon || '□'} ${cont.name}</div>
         <div class="meta" style="color:${statusColor}">${statusText}</div>
       </div>
-      <button class="act-btn" style="flex:0;min-width:60px" onclick="event.stopPropagation();searchContainer(${ci})">${btnText}</button>
+      <button class="act-btn" style="flex:0;min-width:60px;${disabled}" ${isOccupied?'disabled':''} onclick="event.stopPropagation();searchContainer(${ci})">${btnText}</button>
     </div>`;
   });
 
@@ -2868,15 +2881,24 @@ function showContainerList(room) {
 
   html += '</div>';
   html += `<div style="margin-top:10px"><button class="act-btn" onclick="closeModal()" style="width:100%;border-color:#661122;color:var(--red)">Закрыть</button></div>`;
-  openModal(`Обыск: ${room.name}`, html);
+  if (_replace && typeof replaceModal === 'function') replaceModal(`Обыск: ${room.name}`, html);
+  else openModal(`Обыск: ${room.name}`, html);
 }
 
 function searchContainer(ci) {
   const room = currentRoom();
   if (!room || !room.containers || !room.containers[ci]) return;
-  Bus.emit('loot:claim', { nodeId: G.world.currentNodeId, roomIdx: G.world.currentRoom, ci });
   if (G.activeAction) return;
   const cont = room.containers[ci];
+
+  // MP: Check if another player is searching this container
+  if (cont._searchingBy && cont._searchingBy !== (typeof Net !== 'undefined' ? Net.localId : 'local')) {
+    addLog(`🔒 ${cont.name} обыскивает другой игрок`, 'warning');
+    return;
+  }
+
+  // MP: Lock container for this player
+  Bus.emit('loot:claim', { nodeId: G.world.currentNodeId, roomIdx: G.world.currentRoom, ci });
 
   // Check if container is locked
   if (cont.locked && !cont.locked.unlocked) {
@@ -2886,6 +2908,12 @@ function searchContainer(ci) {
       showContainerList(room);
     });
     return;
+  }
+
+  // MP: Mark as being searched by us
+  cont._searchingBy = typeof Net !== 'undefined' ? Net.localId : 'local';
+  if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
+    Net.broadcast({ t:'e', e:'container_lock', nodeId:G.world.currentNodeId, roomIdx:G.world.currentRoom, ci, playerId:Net.localId });
   }
 
   // Highlight furniture on canvas
@@ -2968,7 +2996,7 @@ function showLootPicker(room, containerIdx, staggered) {
 
   if (availableLoot.length === 0) {
     addLog('Пусто.', 'warning');
-    showContainerList(room);
+    showContainerList(room, true);
     return;
   }
 
@@ -3004,9 +3032,10 @@ function showLootPicker(room, containerIdx, staggered) {
   const btnStaggerStyle = staggered ? 'opacity:0;transition:opacity .3s ease' : '';
   html += `<div id="loot-actions" style="margin-top:10px;display:flex;gap:8px;${btnStaggerStyle}">
     <button class="act-btn" onclick="takeAllFromContainer(${containerIdx})" style="flex:1">Взять всё</button>
-    <button class="act-btn" onclick="showContainerList(currentRoom())" style="flex:1">Назад</button>
+    <button class="act-btn" onclick="showContainerList(currentRoom(),true)" style="flex:1">Назад</button>
   </div>`;
-  openModal(contName, html);
+  if (typeof replaceModal === 'function') replaceModal(contName, html);
+  else openModal(contName, html);
 
   // Staggered reveal: items appear one by one with sound
   if (staggered) {
@@ -3060,10 +3089,9 @@ function takeLootItem(source, containerIdx, idx) {
     let item;
     if (source === 'container') {
       const cont = room.containers && room.containers[containerIdx];
-      if (!cont || !cont.loot) { addLog('Предмет уже забран.', 'warning'); return; }
-      // Find by reference (not index — index shifts when others take items)
+      if (!cont || !cont.loot) { targetItem._taking = false; addLog('Предмет уже забран.', 'warning'); showLootPicker(room, containerIdx); return; }
       const realIdx = cont.loot.indexOf(targetItem);
-      if (realIdx < 0 || targetItem._taken) { addLog('Предмет уже забран другим игроком.', 'warning'); return; }
+      if (realIdx < 0 || targetItem._taken) { targetItem._taking = false; addLog('Предмет уже забран другим игроком.', 'warning'); showLootPicker(room, containerIdx); return; }
       targetItem._taken = true;
       item = cont.loot.splice(realIdx, 1)[0];
     } else if (source === 'loot') {
@@ -3123,6 +3151,15 @@ function takeAllFromContainer(containerIdx) {
       });
       room.floor = [];
     }
+    // Mark all as taken (anti-dupe)
+    allItems.forEach(item => { item._taken = true; });
+    // Broadcast for multiplayer
+    if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
+      Net.markDirty(G.world.currentNodeId);
+      allItems.forEach(item => {
+        Net.broadcast({ t:'e', e:'loot_taken', nodeId:G.world.currentNodeId, roomIdx:G.world.currentRoom, ci:containerIdx, itemId:item.id, source:'container' });
+      });
+    }
     // Staggered loot animation + sound
     allItems.forEach((item, i) => {
       const name = item.keyName || ITEMS[item.id]?.name || item.id;
@@ -3132,10 +3169,10 @@ function takeAllFromContainer(containerIdx) {
         if (typeof showLootAnimation === 'function') {
           showLootAnimation(name, window.innerWidth/2 + (Math.random()-0.5)*60, window.innerHeight/2 - i*20);
         }
-      }, i * 200); // 200ms between each item
+      }, i * 200);
     });
     calcWeight();
-    showContainerList(room);
+    showContainerList(room, true);
     updateUI();
     saveGame();
   });

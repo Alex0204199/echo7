@@ -393,18 +393,16 @@ function addLog(text, cls = '') {
   while (log.children.length > 100) log.removeChild(log.firstChild);
 }
 
-// ── MODAL (with stack for nested modals) ──
+// ── MODAL (with stack for nested modals, max depth 3) ──
 let _modalStack = [];
 
 function openModal(title, html, modalType) {
-  // Save current modal state to stack if already open
   const overlay = document.getElementById('modal-overlay');
-  if (overlay?.classList.contains('active')) {
+  if (overlay?.classList.contains('active') && _modalStack.length < 3) {
     _modalStack.push({
       title: document.getElementById('modal-title').textContent,
       html: document.getElementById('modal-body').innerHTML,
       type: document.getElementById('modal').className,
-      closeDisplay: document.getElementById('modal-close').style.display,
     });
   }
   const modal = document.getElementById('modal');
@@ -415,18 +413,27 @@ function openModal(title, html, modalType) {
   document.getElementById('modal-close').style.display = '';
 }
 
+// Replace current modal without pushing to stack (same-level navigation)
+function replaceModal(title, html, modalType) {
+  const modal = document.getElementById('modal');
+  modal.className = modalType ? 'modal-' + modalType : '';
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').innerHTML = html;
+  document.getElementById('modal-overlay').classList.add('active');
+  document.getElementById('modal-close').style.display = '';
+}
+
 function closeModal() {
-  // If there's a parent modal on the stack, restore it instead of closing
   if (_modalStack.length > 0) {
     const prev = _modalStack.pop();
     const modal = document.getElementById('modal');
     modal.className = prev.type || '';
     document.getElementById('modal-title').textContent = prev.title;
     document.getElementById('modal-body').innerHTML = prev.html;
-    document.getElementById('modal-close').style.display = prev.closeDisplay || '';
+    document.getElementById('modal-close').style.display = '';
     return;
   }
-  _modalStack = []; // clear stack on full close
+  _modalStack = [];
   document.getElementById('modal-overlay').classList.remove('active');
   if (G) G._zombieLoot = null;
   // Reset modal flex overrides (set by map)

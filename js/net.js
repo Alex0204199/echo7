@@ -421,6 +421,22 @@ const Net = {
       case 'node_searched':
         if (G?.world?.nodes?.[msg.nodeId]) G.world.nodes[msg.nodeId].searched = true;
         break;
+      case 'container_lock': {
+        if (this.mode === 'HOST' && senderId !== Net.localId) Net.broadcast(msg);
+        const clNode = G?.world?.nodes?.[msg.nodeId];
+        if (clNode?.building?.rooms?.[msg.roomIdx]?.containers?.[msg.ci]) {
+          clNode.building.rooms[msg.roomIdx].containers[msg.ci]._searchingBy = msg.playerId || null;
+        }
+        break;
+      }
+      case 'container_unlock': {
+        if (this.mode === 'HOST' && senderId !== Net.localId) Net.broadcast(msg);
+        const cuNode = G?.world?.nodes?.[msg.nodeId];
+        if (cuNode?.building?.rooms?.[msg.roomIdx]?.containers?.[msg.ci]) {
+          cuNode.building.rooms[msg.roomIdx].containers[msg.ci]._searchingBy = null;
+        }
+        break;
+      }
       case 'zombie_killed': {
         // Zombie killed in a room — remove from local state
         const zkNode = G?.world?.nodes?.[msg.nodeId];
