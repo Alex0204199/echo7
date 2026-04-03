@@ -102,8 +102,8 @@ function doJoinConnect() {
   const onWelcome = (msg) => {
     Bus._h['net:welcome'] = (Bus._h['net:welcome'] || []).filter(f => f !== onWelcome);
     Bus._h['net:error'] = (Bus._h['net:error'] || []).filter(f => f !== onError);
+    // _onWelcome in net.js handles auto-enter — just close the code input modal
     closeModal();
-    showJoinWaiting();
   };
   const onError = (data) => {
     Bus._h['net:welcome'] = (Bus._h['net:welcome'] || []).filter(f => f !== onWelcome);
@@ -146,7 +146,14 @@ function lobbyStartGame() {
     temp: G.world.outsideTemp,
   });
   closeModal();
-  G.lastRealTime = Date.now(); G.realTimeAccum = 0; G.paused = false;
+  // Critical: reset ALL timing state to unfreeze game
+  G.lastRealTime = Date.now();
+  G.realTimeAccum = 0;
+  G.paused = false;
+  G.activeAction = null;
+  // Force re-render
+  if (typeof renderPointCloud === 'function') renderPointCloud('scan');
+  if (typeof transitionScene === 'function') transitionScene();
   addLog(`📡 Мультиплеер: игра началась! Игроков: ${Net.playerCount()}`, 'success');
   playSound('scan');
   updateUI();
