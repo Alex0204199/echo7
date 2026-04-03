@@ -403,12 +403,24 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 .bs-item{padding:10px;text-align:center;border-bottom:1px solid var(--border);color:var(--text);font-size:12px;cursor:pointer}
 .bs-item:active{background:rgba(0,255,65,.1)}
 @media(orientation:landscape) and (max-height:500px){
-  #game.landscape{flex-direction:row}
-  #game.landscape #canvas-wrap{width:60%;height:100%}
-  #game.landscape #topbar{font-size:10px;padding:2px 6px}
-  #game.landscape #log{max-height:80px}
-  #game.landscape #actions{display:grid;grid-template-columns:1fr 1fr;gap:3px}
-  #game.landscape #modal{max-width:45vw}
+  #game.landscape{flex-direction:row;height:100vh;height:calc(var(--vh,1vh)*100)}
+  #game.landscape #canvas-wrap{width:55%;height:100%;min-height:0;flex-shrink:0}
+  #game.landscape #topbar{position:absolute;top:0;left:0;right:0;z-index:20;font-size:9px;padding:2px 6px;background:rgba(0,15,0,.9)}
+  #game.landscape #log{max-height:60px;font-size:10px;order:1}
+  #game.landscape #actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px;order:2;padding:2px 4px;max-height:calc(100vh - 70px);overflow-y:auto}
+  #game.landscape .act-btn{min-height:32px;font-size:8px;padding:2px 1px}
+  #game.landscape #modal{max-width:50vw;max-height:90vh}
+  #game.landscape #modal-body{max-height:70vh;overflow-y:auto}
+  #game.landscape #moodles{top:28px;right:2px;font-size:8px}
+  #game.landscape .moodle{padding:1px 3px;font-size:8px}
+  #game.landscape #dpad{bottom:10px;right:4px;opacity:0.4}
+  #game.landscape #mp-canvas-btns{bottom:4px;right:4px}
+  #game.landscape #quick-slots{display:none!important}
+  #game.landscape #noise-bar{transform:scale(0.8);transform-origin:top left}
+}
+@media(orientation:landscape) and (min-height:500px){
+  #game{max-width:800px}
+  #canvas-wrap{min-height:300px}
 }
 .qslot{display:flex;align-items:center;gap:4px;padding:3px 6px;border:1px solid var(--border);background:rgba(0,10,0,.6);border-radius:3px;cursor:pointer;min-width:70px;font-size:9px;color:var(--text-dim);flex:1;max-width:120px;justify-content:center}
 .qslot:active{background:rgba(0,255,65,.1)}
