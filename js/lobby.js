@@ -41,25 +41,48 @@ function showHostLobby() {
   refreshLobbyPlayers();
 }
 
-// ── CLIENT: Code input (shown after chargen, world already created) ──
+// ── CLIENT: Code input + server history ──
 function showJoinCodeInput() {
   const isEn = LANG?.current === 'en';
+  const sessions = loadMPSessions();
   let html = '';
 
-  html += `<div style="text-align:center;margin-bottom:16px">`;
-  html += `<div style="color:var(--text-dim);font-size:10px;letter-spacing:.15em;margin-bottom:8px">${isEn ? 'ENTER ROOM CODE' : 'ВВЕДИТЕ КОД КОМНАТЫ'}</div>`;
-  html += `<input id="join-code-input" type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="12345678" style="width:100%;text-align:center;font-size:24px;letter-spacing:.4em;padding:12px;background:rgba(0,229,255,.05);border:1px solid var(--cyan);color:var(--cyan);font-family:monospace;border-radius:4px">`;
-  html += `</div>`;
-
-  html += `<div id="join-status" style="text-align:center;color:var(--text-dim);font-size:10px;min-height:20px;margin-bottom:8px"></div>`;
-
+  // New connection
+  html += `<div style="margin-bottom:12px">`;
+  html += `<div style="color:var(--text-dim);font-size:10px;letter-spacing:.1em;margin-bottom:6px">${isEn ? 'ENTER CODE' : 'ВВЕДИТЕ КОД'}</div>`;
   html += `<div style="display:flex;gap:6px">`;
-  html += `<button class="act-btn" id="join-btn" onclick="doJoinConnect()" style="flex:2;padding:10px;border-color:var(--cyan);color:var(--cyan)">${isEn ? 'CONNECT' : 'ПОДКЛЮЧИТЬСЯ'}</button>`;
-  html += `<button class="act-btn" onclick="closeModal()" style="flex:1;padding:10px">${isEn ? 'CANCEL' : 'ОТМЕНА'}</button>`;
+  html += `<input id="join-code-input" type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="12345678" style="flex:1;text-align:center;font-size:20px;letter-spacing:.4em;padding:10px;background:rgba(0,229,255,.05);border:1px solid var(--cyan);color:var(--cyan);font-family:monospace;border-radius:4px">`;
+  html += `<button class="act-btn" id="join-btn" onclick="doJoinConnect()" style="min-width:80px;border-color:var(--cyan);color:var(--cyan)">→</button>`;
+  html += `</div>`;
   html += `</div>`;
 
-  openModal(isEn ? '📡 Join Game' : '📡 Подключиться', html);
+  html += `<div id="join-status" style="text-align:center;color:var(--text-dim);font-size:10px;min-height:16px;margin-bottom:8px"></div>`;
+
+  // Server history
+  if (sessions.length > 0) {
+    html += `<div style="color:var(--text-dim);font-size:9px;letter-spacing:.1em;margin-bottom:6px">${isEn ? 'RECENT SERVERS' : 'НЕДАВНИЕ СЕРВЕРЫ'}</div>`;
+    html += `<div style="max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;margin-bottom:10px">`;
+    sessions.forEach(s => {
+      const age = Date.now() - s.lastActive;
+      const ageText = age < 3600000 ? Math.floor(age/60000) + ' мин назад' : age < 86400000 ? Math.floor(age/3600000) + ' ч назад' : Math.floor(age/86400000) + ' д назад';
+      html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:rgba(0,229,255,.02)" onclick="quickJoin('${s.roomCode}')">`;
+      html += `<div style="flex:1"><div style="color:var(--cyan);font-size:12px;font-weight:bold;letter-spacing:.1em">${s.roomCode}</div>`;
+      html += `<div style="color:var(--text-dim);font-size:8px">${s.hostName} · ${s.characterName} · ${ageText}</div></div>`;
+      html += `<button class="act-btn" style="padding:4px 8px;font-size:9px;border-color:var(--cyan);color:var(--cyan)" onclick="event.stopPropagation();quickJoin('${s.roomCode}')">→</button>`;
+      html += `</div>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `<button class="act-btn" onclick="closeModal()" style="width:100%;padding:8px">${isEn ? 'Cancel' : 'Отмена'}</button>`;
+
+  openModal(isEn ? '📡 Join' : '📡 Подключиться', html);
   setTimeout(() => document.getElementById('join-code-input')?.focus(), 100);
+}
+
+function quickJoin(code) {
+  document.getElementById('join-code-input').value = code;
+  doJoinConnect();
 }
 
 // ── CLIENT: Connect to host ──

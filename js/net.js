@@ -4,6 +4,40 @@
 
 const RELAY_SERVER = 'wss://echo7-signal.onrender.com';
 
+// ── Session persistence ──
+function saveMPSession(data) {
+  try {
+    const sessions = JSON.parse(localStorage.getItem('echo7_sessions') || '[]');
+    const idx = sessions.findIndex(s => s.roomCode === data.roomCode);
+    const entry = {
+      roomCode: data.roomCode,
+      hostName: data.hostName || 'Host',
+      seed: data.seed || 0,
+      playerId: data.playerId || null,
+      characterName: data.characterName || 'Player',
+      occupation: data.occupation || 'unemployed',
+      traitIds: data.traitIds || [],
+      timestamp: data.timestamp || Date.now(),
+      lastActive: Date.now(),
+    };
+    if (idx >= 0) sessions[idx] = entry;
+    else sessions.unshift(entry);
+    // Keep last 20 sessions
+    localStorage.setItem('echo7_sessions', JSON.stringify(sessions.slice(0, 20)));
+  } catch(e) {}
+}
+
+function loadMPSessions() {
+  try { return JSON.parse(localStorage.getItem('echo7_sessions') || '[]'); } catch(e) { return []; }
+}
+
+function removeMPSession(roomCode) {
+  try {
+    const sessions = loadMPSessions().filter(s => s.roomCode !== roomCode);
+    localStorage.setItem('echo7_sessions', JSON.stringify(sessions));
+  } catch(e) {}
+}
+
 const Net = {
   mode: 'OFFLINE',      // 'OFFLINE' | 'HOST' | 'CLIENT'
   ws: null,             // WebSocket connection
@@ -39,6 +73,7 @@ const Net = {
         this._timeSyncInterval = setInterval(() => this._broadcastTime(), 5000);
         this._worldSyncInterval = setInterval(() => this._broadcastWorldDelta(), 30000);
         this._startPing();
+        saveMPSession({ roomCode: this.roomCode, hostName: playerName, seed: G?.seed, playerId: 'host', characterName: playerName });
         Bus.emit('net:host_ready', { roomCode: this.roomCode });
       }
       if (msg.t === 'join') this._onPlayerJoin(msg.id, msg);
@@ -63,7 +98,9 @@ const Net = {
     }, 15000);
 
     this.ws.onopen = () => {
-      this.ws.send(JSON.stringify({ t: 'join', code: roomCode, name: playerName }));
+      // Send playerId if reconnecting (server will recognize)
+      const existingSession = loadMPSessions().find(s => s.roomCode === roomCode);
+      this.ws.send(JSON.stringify({ t: 'join', code: roomCode, name: playerName, playerId: existingSession?.playerId || null }));
     };
     this.ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
@@ -248,9 +285,43 @@ const Net = {
       this.players[id] = info;
       if (id !== this.localId) sceneData.remotePlayers[id] = { ...info, color: '#00E5FF' };
     });
-    // Store welcome data — will be applied after world gen
     this._welcomeData = msg;
+    // Save session
+    saveMPSession({
+      roomCode: this.roomCode,
+      hostName: msg.players?.host?.name || 'Host',
+      seed: msg.seed,
+      playerId: this.localId,
+      characterName: G?.characterName || this._playerName || 'Player',
+      occupation: G?.scenario,
+      traitIds: G?.traitIds,
+    });
     Bus.emit('net:welcome', msg);
+
+    // Auto-enter: if client has a game with different seed, regenerate world
+    if (G && msg.seed && msg.seed !== G.seed) {
+      closeModal();
+      const saved = JSON.parse(JSON.stringify(G.player));
+      window._forceSeed = msg.seed;
+      newGame({ name: G.characterName, occupation: G.scenario || 'unemployed', traits: G.traitIds || [], difficulty: msg.difficulty?.id || 'normal', startSeason: msg.season || 'summer', sandbox: msg.difficulty });
+      setTimeout(() => {
+        if (G) {
+          Object.assign(G.player, { skills: saved.skills, skillXp: saved.skillXp, inventory: saved.inventory, equipment: saved.equipment, equipped: saved.equipped, weaponSlot1: saved.weaponSlot1, weaponSlot2: saved.weaponSlot2 });
+          this._applyWelcomeData();
+          if (typeof calcWeight === 'function') calcWeight();
+          G.lastRealTime = Date.now(); G.realTimeAccum = 0; G.paused = false;
+          addLog('📡 Подключено! Мир синхронизирован.', 'success');
+          updateUI();
+        }
+      }, 5000);
+    } else if (G) {
+      // Same seed — just apply
+      closeModal();
+      this._applyWelcomeData();
+      G.lastRealTime = Date.now(); G.realTimeAccum = 0; G.paused = false;
+      addLog('📡 Подключено к серверу!', 'success');
+      updateUI();
+    }
   },
 
   // Apply welcome data after client creates world
@@ -531,7 +602,10 @@ function declineTrade(fromId) {
 
 // ── Wire Bus events to network ──
 Bus.on('net:host_disconnected', () => {
-  if (G) saveGame();
+  if (G) {
+    G.mpSession = { roomCode: Net.roomCode, seed: G.seed, playerId: Net.localId };
+    saveGame();
+  }
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.95);display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:monospace';
   overlay.innerHTML = `<div style="color:var(--red);font-size:16px;letter-spacing:.3em;margin-bottom:12px">СОЕДИНЕНИЕ ПОТЕРЯНО</div><div style="color:var(--text-dim);font-size:11px;margin-bottom:20px">Хост отключился. Прогресс сохранён.</div><button onclick="this.parentElement.remove();exitToMenuDirect()" style="padding:10px 30px;border:1px solid var(--green);background:rgba(0,255,65,.08);color:var(--green);font-family:monospace;font-size:12px;cursor:pointer">ГЛАВНОЕ МЕНЮ</button>`;
