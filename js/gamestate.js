@@ -2908,7 +2908,7 @@ function searchContainer(ci) {
     showLockModal(cont.locked, cont.name, () => {
       cont.locked.unlocked = true;
       addLog(`${cont.name} открыт!`, 'success');
-      showContainerList(room);
+      showContainerList(room, true);
     });
     return;
   }
@@ -3136,7 +3136,7 @@ function takeAllFromContainer(containerIdx) {
   } else if (containerIdx === -1 && room.floor) {
     itemCount = room.floor.length;
   }
-  if (itemCount === 0) { showContainerList(room); return; }
+  if (itemCount === 0) { showContainerList(room, true); return; }
 
   startTimedAction(`Забираю всё (${itemCount} предм.)`, Math.min(itemCount, 5), () => {
     let allItems = [];
@@ -4623,7 +4623,10 @@ function showInventory() {
     : '🖱 ПКМ — меню действий · Перетащите предмет в слот';
   html += `<div class="inv-info" id="inv-info-panel">${invHint}</div>`;
 
-  openModal('Инвентарь', html, 'inventory');
+  // Use replaceModal if inventory is already open (prevent stack buildup)
+  const _invAlreadyOpen = document.getElementById('modal')?.className?.includes('inventory');
+  if (_invAlreadyOpen && typeof replaceModal === 'function') replaceModal('Инвентарь', html, 'inventory');
+  else openModal('Инвентарь', html, 'inventory');
 
   // Position equipment slots on the silhouette after DOM render
   setTimeout(() => {
@@ -5575,7 +5578,9 @@ function showHealth() {
 
   html += `<div style="margin-top:14px;color:var(--text-dim);font-size:10px;text-align:center">Дней прожито: ${G.player.daysSurvived} · Зомби убито: ${G.stats.zombiesKilled}</div>`;
 
-  openModal('Здоровье и навыки', html, 'health');
+  const _healthOpen = document.getElementById('modal')?.className?.includes('health');
+  if (_healthOpen && typeof replaceModal === 'function') replaceModal('Здоровье и навыки', html, 'health');
+  else openModal('Здоровье и навыки', html, 'health');
 }
 
 // ── CRAFTING ──
@@ -5631,7 +5636,9 @@ function showCrafting() {
     }
   }
 
-  openModal('⚒ Крафт', html, 'craft');
+  const _craftOpen = document.getElementById('modal')?.className?.includes('craft');
+  if (_craftOpen && typeof replaceModal === 'function') replaceModal('⚒ Крафт', html, 'craft');
+  else openModal('⚒ Крафт', html, 'craft');
 }
 
 function doCraft(idx) {
