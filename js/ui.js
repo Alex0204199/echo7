@@ -398,11 +398,14 @@ let _modalStack = [];
 
 function openModal(title, html, modalType) {
   const overlay = document.getElementById('modal-overlay');
-  if (overlay?.classList.contains('active') && _modalStack.length < 3) {
+  const curType = document.getElementById('modal')?.className || '';
+  // Don't push to stack if same modal type is refreshing itself
+  const sameType = modalType && curType.includes(modalType);
+  if (overlay?.classList.contains('active') && _modalStack.length < 3 && !sameType) {
     _modalStack.push({
       title: document.getElementById('modal-title').textContent,
       html: document.getElementById('modal-body').innerHTML,
-      type: document.getElementById('modal').className,
+      type: curType,
     });
   }
   const modal = document.getElementById('modal');

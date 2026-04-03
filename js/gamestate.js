@@ -4623,10 +4623,13 @@ function showInventory() {
     : '🖱 ПКМ — меню действий · Перетащите предмет в слот';
   html += `<div class="inv-info" id="inv-info-panel">${invHint}</div>`;
 
-  // Use replaceModal if inventory is already open (prevent stack buildup)
-  const _invAlreadyOpen = document.getElementById('modal')?.className?.includes('inventory');
-  if (_invAlreadyOpen && typeof replaceModal === 'function') replaceModal('Инвентарь', html, 'inventory');
-  else openModal('Инвентарь', html, 'inventory');
+  // Always clear modal stack and replace — inventory is a top-level screen
+  if (typeof _modalStack !== 'undefined') _modalStack = [];
+  if (typeof replaceModal === 'function' && document.getElementById('modal-overlay')?.classList.contains('active')) {
+    replaceModal('Инвентарь', html, 'inventory');
+  } else {
+    openModal('Инвентарь', html, 'inventory');
+  }
 
   // Position equipment slots on the silhouette after DOM render
   setTimeout(() => {
@@ -5578,8 +5581,8 @@ function showHealth() {
 
   html += `<div style="margin-top:14px;color:var(--text-dim);font-size:10px;text-align:center">Дней прожито: ${G.player.daysSurvived} · Зомби убито: ${G.stats.zombiesKilled}</div>`;
 
-  const _healthOpen = document.getElementById('modal')?.className?.includes('health');
-  if (_healthOpen && typeof replaceModal === 'function') replaceModal('Здоровье и навыки', html, 'health');
+  if (typeof _modalStack !== 'undefined') _modalStack = [];
+  if (typeof replaceModal === 'function' && document.getElementById('modal-overlay')?.classList.contains('active')) replaceModal('Здоровье и навыки', html, 'health');
   else openModal('Здоровье и навыки', html, 'health');
 }
 
@@ -5636,8 +5639,8 @@ function showCrafting() {
     }
   }
 
-  const _craftOpen = document.getElementById('modal')?.className?.includes('craft');
-  if (_craftOpen && typeof replaceModal === 'function') replaceModal('⚒ Крафт', html, 'craft');
+  if (typeof _modalStack !== 'undefined') _modalStack = [];
+  if (typeof replaceModal === 'function' && document.getElementById('modal-overlay')?.classList.contains('active')) replaceModal('⚒ Крафт', html, 'craft');
   else openModal('⚒ Крафт', html, 'craft');
 }
 
