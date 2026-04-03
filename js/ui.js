@@ -319,7 +319,9 @@ function updateUI() {
     }
     const count = Net.playerCount();
     const isHost = Net.mode === 'HOST';
-    mpEl.innerHTML = `<span style="color:var(--cyan);opacity:.6">📡 ${isHost ? 'HOST' : 'CLIENT'} · ${count} ${count === 1 ? 'игрок' : 'игроков'}</span>`;
+    const pingMs = Net.ping || 0;
+    const pingColor = pingMs < 100 ? 'var(--green)' : pingMs < 300 ? 'var(--yellow)' : 'var(--red)';
+    mpEl.innerHTML = `<span style="color:var(--cyan);opacity:.6">📡 ${isHost ? 'HOST' : 'CLIENT'} · ${count} ${count === 1 ? 'игрок' : 'игроков'}</span>${pingMs > 0 ? ` <span style="color:${pingColor};opacity:.5">${pingMs}ms</span>` : ''}`;
   }
 
   // Check achievements every UI update

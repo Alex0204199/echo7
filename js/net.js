@@ -38,6 +38,7 @@ const Net = {
         this.players[this.localId] = { name: playerName, nodeId: null, roomIdx: -1, x: 0, y: 0, dir: 2 };
         this._timeSyncInterval = setInterval(() => this._broadcastTime(), 5000);
         this._worldSyncInterval = setInterval(() => this._broadcastWorldDelta(), 30000);
+        this._startPing();
         Bus.emit('net:host_ready', { roomCode: this.roomCode });
       }
       if (msg.t === 'join') this._onPlayerJoin(msg.id, msg);
@@ -82,7 +83,19 @@ const Net = {
       Bus.emit('net:error', { error: 'Ошибка WebSocket. Проверьте интернет.' });
     };
     this.ws.onclose = () => {
-      if (this.mode === 'CLIENT') Bus.emit('net:host_disconnected', {});
+      if (this.mode === 'CLIENT' && !this._intentionalDisconnect) {
+        // Auto-reconnect attempt
+        this._reconnectAttempts = (this._reconnectAttempts || 0) + 1;
+        if (this._reconnectAttempts <= 3) {
+          addLog(`📡 Соединение потеряно. Переподключение (${this._reconnectAttempts}/3)...`, 'warning');
+          setTimeout(() => {
+            if (this.mode === 'CLIENT') this.joinGame(this.roomCode, this._playerName || 'Player');
+          }, 2000 * this._reconnectAttempts);
+        } else {
+          this._reconnectAttempts = 0;
+          Bus.emit('net:host_disconnected', {});
+        }
+      }
     };
   },
 
@@ -147,6 +160,14 @@ const Net = {
         sceneData.remotePlayers[msg.id] = { ...msg.player, color: '#00E5FF' };
         addLog(`📡 ${msg.player.name} присоединился`, 'success');
         Bus.emit('net:player_join', msg);
+        break;
+      case 'ping':
+        // Respond with pong
+        if (this.mode === 'HOST') this.send(senderId, { t:'pong', ts: msg.ts });
+        else this.send(null, { t:'pong', ts: msg.ts });
+        break;
+      case 'pong':
+        this.ping = Date.now() - (msg.ts || 0);
         break;
       case 'emote':
         if (msg.id && msg.id !== this.localId && sceneData.remotePlayers[msg.id]) {
@@ -291,6 +312,38 @@ const Net = {
       case 'node_searched':
         if (G?.world?.nodes?.[msg.nodeId]) G.world.nodes[msg.nodeId].searched = true;
         break;
+      case 'zombie_killed': {
+        // Zombie killed in a room — remove from local state
+        const zkNode = G?.world?.nodes?.[msg.nodeId];
+        if (zkNode?.building?.rooms?.[msg.roomIdx]) {
+          zkNode.building.rooms[msg.roomIdx].zombies = null;
+        }
+        // Remove zombie entity from LIDAR
+        if (typeof sceneData !== 'undefined') {
+          sceneData.zombieEntities = sceneData.zombieEntities.filter(ze => ze.roomIdx !== msg.roomIdx);
+        }
+        break;
+      }
+      case 'loot_taken': {
+        // Another player took an item — remove from local world state
+        const ltNode = G?.world?.nodes?.[msg.nodeId];
+        if (ltNode?.building?.rooms?.[msg.roomIdx]?.containers?.[msg.ci]) {
+          const ltCont = ltNode.building.rooms[msg.roomIdx].containers[msg.ci];
+          const ltIdx = ltCont.loot?.findIndex(i => i.id === msg.itemId);
+          if (ltIdx >= 0) ltCont.loot.splice(ltIdx, 1);
+        }
+        break;
+      }
+      case 'trigger_seen':
+        if (G?.triggers?.[msg.triggerId]) G.triggers[msg.triggerId].seen = true;
+        break;
+      case 'base_set':
+        if (G) {
+          G.world.homeBase = msg.homeBase;
+          G.world.homeBaseSecurity = msg.security;
+          addLog(`📡 Убежище обновлено`, 'info');
+        }
+        break;
       case 'trade_request':
         if (msg.targetId && msg.targetId !== Net.localId && Net.mode === 'HOST') {
           // Host relays to target
@@ -365,9 +418,12 @@ const Net = {
   },
 
   disconnect() {
+    this._intentionalDisconnect = true;
+    this._reconnectAttempts = 0;
     clearTimeout(this._connectTimeout);
     clearInterval(this._timeSyncInterval);
     clearInterval(this._worldSyncInterval);
+    clearInterval(this._pingInterval);
     if (this.ws) try { this.ws.close(); } catch(e){}
     this.ws = null;
     this.players = {};
@@ -376,6 +432,21 @@ const Net = {
     this.roomCode = null;
     sceneData.remotePlayers = {};
     this._dirtyNodes.clear();
+    this._intentionalDisconnect = false;
+  },
+
+  ping: 0,
+  _pingInterval: null,
+
+  _startPing() {
+    this._pingInterval = setInterval(() => {
+      if (this.ws?.readyState === 1) {
+        this._pingSent = Date.now();
+        // Host pings clients, client pings host
+        if (this.mode === 'HOST') this.broadcast({ t:'ping', ts: this._pingSent });
+        else this.send(null, { t:'ping', ts: this._pingSent });
+      }
+    }, 5000);
   },
 
   playerCount() { return Object.keys(this.players).length; }

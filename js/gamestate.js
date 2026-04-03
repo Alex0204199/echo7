@@ -1401,6 +1401,10 @@ function moveToNode(nodeId) {
     G.triggers[node.triggerEvent].seen = true;
     const evt = TRIGGER_EVENTS.find(e => e.id === node.triggerEvent);
     if (evt) setTimeout(() => showTriggerEvent(evt), 1000);
+    // Sync to other players
+    if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
+      Net.broadcast({ t:'e', e:'trigger_seen', triggerId: node.triggerEvent });
+    }
   }
 }
 
@@ -3055,7 +3059,11 @@ function takeLootItem(source, containerIdx, idx) {
     playSound('pickup');
     if (typeof showLootAnimation === 'function') showLootAnimation(itemName);
     calcWeight();
-    if (typeof Net !== 'undefined') Net.markDirty(G.world.currentNodeId);
+    if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
+      Net.markDirty(G.world.currentNodeId);
+      // Immediate broadcast: item taken from container
+      Net.broadcast({ t:'e', e:'loot_taken', nodeId:G.world.currentNodeId, roomIdx:G.world.currentRoom, ci:containerIdx, itemId:item.id, source });
+    }
     if (source === 'container') showLootPicker(room, containerIdx);
     else if (source === 'floor') showLootPicker(room, -1);
     else showLootPicker(room);
@@ -3864,7 +3872,10 @@ function combatVictory() {
   closeModal();
   addLog(`${z.name} уничтожен!`, 'success');
   addNoise(z.deathNoise);
-  if (typeof Net !== 'undefined') Net.markDirty(G.world.currentNodeId);
+  if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
+    Net.markDirty(G.world.currentNodeId);
+    Net.broadcast({ t:'e', e:'zombie_killed', nodeId:G.world.currentNodeId, roomIdx:G.world.currentRoom });
+  }
   Bus.emit('combat:victory', { nodeId: G.world.currentNodeId });
   G.stats.zombiesKilled++;
   if(G?._dayStats) G._dayStats.kills++;
@@ -4177,6 +4188,10 @@ function doBase() {
     G.world.homeBase = loc.id;
     G.world.homeBaseSecurity = 1;
     addLog(`${loc.name} установлен как убежище! Безопасность: 1/10.`, 'success');
+  }
+  // Sync base to all players
+  if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
+    Net.broadcast({ t:'e', e:'base_set', nodeId:G.world.currentNodeId, homeBase:G.world.homeBase, security:G.world.homeBaseSecurity });
   }
   updateUI();
   saveGame();
