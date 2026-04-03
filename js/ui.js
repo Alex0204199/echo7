@@ -338,21 +338,36 @@ function updateUI() {
     const pingColor = pingMs < 100 ? 'var(--green)' : pingMs < 300 ? 'var(--yellow)' : 'var(--red)';
     mpEl.innerHTML = `<span style="color:var(--cyan);opacity:.6">📡 ${isHost ? 'HOST' : 'CLIENT'} · ${count} ${count === 1 ? 'игрок' : 'игроков'}</span>${pingMs > 0 ? ` <span style="color:${pingColor};opacity:.5">${pingMs}ms</span>` : ''}`;
 
-    // Party HUD — show party members' status
+    // Party HUD — full panel with names, status, HP
     if (window._party?.members?.length > 1) {
-      let partyHtml = '';
+      let partyHtml = '<div style="margin-top:3px;border-top:1px solid rgba(0,229,255,.15);padding-top:2px">';
+      partyHtml += '<div style="color:rgba(0,229,255,.4);font-size:7px;letter-spacing:.1em;margin-bottom:1px">👥 ГРУППА</div>';
       window._party.members.forEach(pid => {
         if (pid === Net.localId) return;
         const pInfo = Net.players[pid];
         if (!pInfo) return;
-        const name = pInfo.name || pid;
+        const intro = typeof _introductions !== 'undefined' ? _introductions[pid] : null;
+        const name = intro?.name || pInfo.name || '???';
         const sameNode = pInfo.nodeId === G?.world?.currentNodeId;
-        partyHtml += `<div style="display:flex;align-items:center;gap:4px;margin-top:2px;opacity:${sameNode?'0.8':'0.4'}">`;
-        partyHtml += `<span style="color:var(--cyan);font-size:7px">●</span>`;
-        partyHtml += `<span style="color:var(--text-dim);font-size:8px">${name}</span>`;
+        const status = pInfo.status || '';
+        const statusIcons = { '⚔':'В бою', '🔍':'Обыск', '🥷':'Тихо', '🏃':'В пути' };
+        partyHtml += `<div style="display:flex;align-items:center;gap:3px;margin-top:1px;opacity:${sameNode?'0.9':'0.4'}">`;
+        partyHtml += `<span style="color:${sameNode?'var(--green)':'var(--text-muted)'};font-size:6px">●</span>`;
+        partyHtml += `<span style="color:var(--text-dim);font-size:8px;flex:1">${name}</span>`;
+        if (status) partyHtml += `<span style="font-size:8px" title="${statusIcons[status]||''}">${status}</span>`;
         partyHtml += `</div>`;
       });
-      if (partyHtml) mpEl.innerHTML += `<div style="margin-top:3px;border-top:1px solid rgba(0,229,255,.15);padding-top:2px">` + partyHtml + `</div>`;
+      partyHtml += '</div>';
+      mpEl.innerHTML += partyHtml;
+    }
+    // Also show followers
+    if (typeof _followTarget !== 'undefined' && _followTarget) {
+      const fName = Net.players[_followTarget]?.name || '???';
+      mpEl.innerHTML += `<div style="font-size:7px;color:rgba(0,229,255,.4);margin-top:2px">👣 → ${fName}</div>`;
+    }
+    if (typeof _follower !== 'undefined' && _follower) {
+      const fName = Net.players[_follower]?.name || '???';
+      mpEl.innerHTML += `<div style="font-size:7px;color:rgba(0,229,255,.4);margin-top:2px">👣 ${fName} → вы</div>`;
     }
   }
 

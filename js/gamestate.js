@@ -3808,6 +3808,30 @@ function showCombatUI() {
 }
 
 // ── Block mechanic ──
+// ── Combat visual effects ──
+function _showCombatDmgFloat(dmg, isCrit) {
+  const el = document.createElement('div');
+  const color = isCrit ? '#ff4444' : '#ffcc00';
+  const size = isCrit ? 24 : 18;
+  el.style.cssText = `position:fixed;z-index:9999;pointer-events:none;font-family:monospace;font-weight:bold;font-size:${size}px;color:${color};text-shadow:0 0 6px ${color},0 2px 4px rgba(0,0,0,.8);top:35%;left:${45 + Math.random()*10}%;transition:all .8s ease-out`;
+  el.textContent = (isCrit ? '💥 ' : '') + '-' + dmg;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => {
+    el.style.transform = `translateY(-${40 + Math.random()*30}px) scale(${isCrit?1.3:1})`;
+    el.style.opacity = '0';
+  });
+  setTimeout(() => el.remove(), 900);
+}
+
+function _showCombatHitEffect() {
+  // Brief red flash on the modal
+  const modal = document.getElementById('modal');
+  if (modal) {
+    modal.style.boxShadow = '0 0 30px rgba(255,34,68,.4) inset';
+    setTimeout(() => { modal.style.boxShadow = ''; }, 200);
+  }
+}
+
 function combatBlock() {
   if (!G.combatState) return;
   if (Date.now() < (G.combatState._blockCdUntil || 0)) return;
@@ -3897,6 +3921,10 @@ function combatAttack() {
 
     // Combat log
     if (!G.combatState._log) G.combatState._log = [];
+    G.combatState._log.push(`${isCrit ? '💥 КРИТ! ' : ''}${G.characterName}: −${dmg}`);
+
+    // Floating damage number
+    _showCombatDmgFloat(dmg, isCrit);
 
     // Broadcast damage to co-op players
     if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE') {
@@ -3975,8 +4003,17 @@ function zombieAttack() {
 
     const partNames = { head:'Голова', torso:'Торс', armL:'Л.рука', armR:'П.рука', legL:'Л.нога', legR:'П.нога' };
     addLog(`${z.name} наносит ${dmg} урона [${partNames[hitPart]}: ${p.hp[hitPart]}%]`, 'danger');
+    if (G.combatState?._log) G.combatState._log.push(`${z.name} → вам: −${dmg} [${partNames[hitPart]}]`);
     playSound('damage');
     if (typeof showDamageVignette === 'function') showDamageVignette(dmg / 20);
+    _showCombatHitEffect();
+    // Floating damage on player
+    const hitEl = document.createElement('div');
+    hitEl.style.cssText = 'position:fixed;z-index:9999;pointer-events:none;font-family:monospace;font-weight:bold;font-size:16px;color:var(--red);text-shadow:0 0 6px rgba(255,34,68,.8);top:55%;left:50%;transform:translateX(-50%);transition:all .6s ease-out';
+    hitEl.textContent = `${G.combatState?._blocking?'🛡 ':''}−${dmg}`;
+    document.body.appendChild(hitEl);
+    requestAnimationFrame(() => { hitEl.style.transform = 'translateX(-50%) translateY(30px)'; hitEl.style.opacity = '0'; });
+    setTimeout(() => hitEl.remove(), 700);
 
     // Bite check (with infection chance from difficulty)
     const infChance = (15 + z.bonus) * (G.difficulty.infectionChance !== undefined ? G.difficulty.infectionChance / 0.5 : 1);

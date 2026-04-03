@@ -477,21 +477,25 @@ const Net = {
         break;
       }
       case 'combat_started': {
-        // Another player started combat at same location — offer to assist
-        if (msg.nodeId === G?.world?.currentNodeId) {
+        if (msg.nodeId === G?.world?.currentNodeId && !G.combatState) {
           addLog(`⚔ Бой начался! ${msg.zombie?.name} атакует!`, 'danger');
-          // If we're not already in combat, offer to join
-          if (!G.combatState) {
+          // Auto-join if following this player
+          if (typeof _followTarget !== 'undefined' && _followTarget) {
+            const z = msg.zombie;
+            _joinCombatWithHP(z.currentHp, z.hp, z.name, z.dmg, z.type);
+            addLog('⚔ Автоматически вступаешь в бой (следование)!', 'danger');
+          } else {
             const isEn = LANG?.current === 'en';
             const z = msg.zombie;
             let cHtml = `<div style="text-align:center;padding:8px">`;
-            cHtml += `<div style="color:var(--red);font-size:14px;margin-bottom:6px">⚔ ${z.name}</div>`;
+            cHtml += `<div style="font-size:28px;margin-bottom:4px">💀</div>`;
+            cHtml += `<div style="color:var(--red);font-size:14px;margin-bottom:4px">${z.name}</div>`;
             cHtml += `<div style="color:var(--text-dim);font-size:10px;margin-bottom:10px">HP: ${z.currentHp}/${z.hp} · ${isEn ? 'Nearby player is fighting!' : 'Другой игрок сражается!'}</div>`;
             cHtml += `<div style="display:flex;gap:6px">`;
-            cHtml += `<button class="act-btn danger" onclick="joinCombat()" style="flex:2;padding:10px">⚔ ${isEn ? 'JOIN FIGHT' : 'ВСТУПИТЬ В БОЙ'}</button>`;
-            cHtml += `<button class="act-btn" onclick="closeModal()" style="flex:1;padding:10px">${isEn ? 'Ignore' : 'Нет'}</button>`;
+            cHtml += `<button class="act-btn danger" onclick="_joinCombatWithHP(${z.currentHp},${z.hp},'${z.name}',${z.dmg},'${z.type||'normal'}')" style="flex:2;padding:10px">⚔ ${isEn ? 'FIGHT' : 'В БОЙ'}</button>`;
+            cHtml += `<button class="act-btn" onclick="closeModal()" style="flex:1;padding:10px">${isEn ? 'No' : 'Нет'}</button>`;
             cHtml += `</div></div>`;
-            openModal('⚔ ' + (isEn ? 'Combat' : 'Бой'), cHtml);
+            openModal('⚔', cHtml);
           }
         }
         break;
@@ -546,14 +550,37 @@ const Net = {
         if (msg.targetId && msg.targetId !== Net.localId && this.mode === 'HOST') {
           Net.send(msg.targetId, msg);
         } else {
-          // Apply healing to our player
+          // Apply healing based on healType
           const med = ITEMS[msg.medId];
           if (med && G?.player) {
-            if (med.hp) Object.keys(G.player.hp).forEach(k => { G.player.hp[k] = Math.min(100, G.player.hp[k] + (med.hp || 0)); });
-            if (med.infection) G.player.moodles.infection = Math.max(0, G.player.moodles.infection + med.infection);
-            if (med.pain) G.player.moodles.pain = Math.max(0, G.player.moodles.pain + med.pain);
-            if (med.bleeding !== undefined) G.player.moodles.bleeding = 0;
+            const p = G.player;
+            switch (med.healType) {
+              case 'bleeding':
+                p.moodles.bleeding = 0;
+                // Also heal some HP
+                Object.keys(p.hp).forEach(k => { p.hp[k] = Math.min(100, p.hp[k] + 10); });
+                break;
+              case 'infection':
+                p.moodles.infection = Math.max(0, p.moodles.infection - 30);
+                break;
+              case 'pain':
+                p.moodles.pain = Math.max(0, p.moodles.pain - 40);
+                break;
+              case 'fracture':
+                // Heal limbs
+                ['armL','armR','legL','legR'].forEach(k => { p.hp[k] = Math.min(100, p.hp[k] + 25); });
+                break;
+              case 'wound':
+                // Disinfect — small infection reduction + small heal
+                p.moodles.infection = Math.max(0, p.moodles.infection - 15);
+                Object.keys(p.hp).forEach(k => { p.hp[k] = Math.min(100, p.hp[k] + 5); });
+                break;
+              default:
+                // Generic heal
+                Object.keys(p.hp).forEach(k => { p.hp[k] = Math.min(100, p.hp[k] + 15); });
+            }
             addLog(`💊 ${msg.fromName} вылечил вас: ${med.name}`, 'success');
+            if (typeof playSound === 'function') playSound('loot');
             if (typeof updateUI === 'function') updateUI();
           }
         }
