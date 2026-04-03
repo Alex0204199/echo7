@@ -1227,9 +1227,12 @@ function animLoop() {
     ctx.globalAlpha = 1;
   }
 
-  // ── Multiplayer: broadcast position & lerp remote players ──
+  // ── Multiplayer: broadcast NORMALIZED position & lerp remote players ──
   if (typeof Net !== 'undefined' && Net.mode !== 'OFFLINE' && G) {
-    Net.sendPosition(sceneData.playerX, sceneData.playerY, sceneData.playerDir, G.world.currentNodeId, G.world.currentRoom);
+    // Normalize position relative to canvas size (0..1) so different screen sizes work
+    const _cw = canvas ? canvas.width / window.devicePixelRatio : 400;
+    const _ch = canvas ? canvas.height / window.devicePixelRatio : 400;
+    Net.sendPosition(sceneData.playerX / _cw, sceneData.playerY / _ch, sceneData.playerDir, G.world.currentNodeId, G.world.currentRoom);
     // Lerp remote player positions for smooth rendering
     Object.values(sceneData.remotePlayers).forEach(rp => {
       if (rp.targetX !== undefined) {

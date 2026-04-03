@@ -155,10 +155,14 @@ const Net = {
     const now = Date.now();
     if (now - this._lastPosSend < this._posInterval) return;
     this._lastPosSend = now;
-    const msg = { t: 'p', x: Math.round(x), y: Math.round(y), d: dir, n: nodeId, r: roomIdx };
+    // x,y are normalized (0..1) — send with 4 decimal precision
+    const msg = { t: 'p', x: +x.toFixed(4), y: +y.toFixed(4), d: dir, n: nodeId, r: roomIdx };
     if (this.mode === 'HOST') {
-      this.players[this.localId].x = x;
-      this.players[this.localId].y = y;
+      // Store denormalized for local rendering
+      const _cw = (typeof canvas !== 'undefined' && canvas) ? canvas.width / window.devicePixelRatio : 400;
+      const _ch = (typeof canvas !== 'undefined' && canvas) ? canvas.height / window.devicePixelRatio : 400;
+      this.players[this.localId].x = x * _cw;
+      this.players[this.localId].y = y * _ch;
       this.players[this.localId].dir = dir;
       this.players[this.localId].nodeId = nodeId;
       this.players[this.localId].roomIdx = roomIdx;
@@ -349,11 +353,16 @@ const Net = {
   _onPositionUpdate(senderId, msg) {
     const id = msg.id || senderId;
     if (id === this.localId) return;
+    // Denormalize position from 0..1 to local canvas size
+    const cw = (typeof canvas !== 'undefined' && canvas) ? canvas.width / window.devicePixelRatio : 400;
+    const ch = (typeof canvas !== 'undefined' && canvas) ? canvas.height / window.devicePixelRatio : 400;
+    const localX = msg.x * cw;
+    const localY = msg.y * ch;
     if (!this.players[id]) this.players[id] = { name:'???', nodeId:null, roomIdx:-1, x:0, y:0, dir:2 };
-    Object.assign(this.players[id], { x:msg.x, y:msg.y, dir:msg.d, nodeId:msg.n, roomIdx:msg.r });
-    if (!sceneData.remotePlayers[id]) sceneData.remotePlayers[id] = { x:msg.x, y:msg.y, dir:msg.d, nodeId:msg.n, roomIdx:msg.r, name:this.players[id].name, color:'#00E5FF' };
+    Object.assign(this.players[id], { x:localX, y:localY, dir:msg.d, nodeId:msg.n, roomIdx:msg.r });
+    if (!sceneData.remotePlayers[id]) sceneData.remotePlayers[id] = { x:localX, y:localY, dir:msg.d, nodeId:msg.n, roomIdx:msg.r, name:this.players[id].name, color:'#00E5FF' };
     const rp = sceneData.remotePlayers[id];
-    rp.targetX=msg.x; rp.targetY=msg.y; rp.dir=msg.d; rp.nodeId=msg.n; rp.roomIdx=msg.r;
+    rp.targetX=localX; rp.targetY=localY; rp.dir=msg.d; rp.nodeId=msg.n; rp.roomIdx=msg.r;
     if (this.mode === 'HOST') this.broadcast({ ...msg, id });
   },
 
