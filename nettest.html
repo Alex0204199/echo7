@@ -18,8 +18,10 @@
 const SRV = { host: 'echo7-signal.onrender.com', port: 443, secure: true, path: '/' };
 const ICE = [
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  // PeerJS built-in TURN (free, included with PeerJS)
+  { urls: 'turn:eu-0.turn.peerjs.com:3478', username: 'peerjs', credential: 'peerjsp' },
+  { urls: 'turn:us-0.turn.peerjs.com:3478', username: 'peerjs', credential: 'peerjsp' },
 ];
 
 function log(msg) {
