@@ -153,12 +153,18 @@ function menuContinue() {
 function menuHostGame() {
   window._pendingHost = true;
   window._pendingJoin = false;
+  // Show mode selector for host
+  const ms = document.getElementById('mode-select');
+  if (ms) ms.style.display = '';
   menuShowPanel('panel-newgame');
 }
 
 function menuJoinGame() {
   window._pendingJoin = true;
   window._pendingHost = false;
+  // Hide mode selector for client — host decides the mode
+  const ms = document.getElementById('mode-select');
+  if (ms) ms.style.display = 'none';
   menuShowPanel('panel-newgame');
 }
 
