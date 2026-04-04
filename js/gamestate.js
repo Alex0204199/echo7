@@ -4040,7 +4040,10 @@ function combatAttack() {
       if (invItem.durability <= 0) {
         addLog(`⚠ ${w.name} сломалось! Оружие уничтожено.`, 'danger');
         p[`weaponSlot${p.activeSlot}`] = null;
-        removeItem(w.id, 1);
+        p[`_weaponData${p.activeSlot}`] = null;
+        // Try remove from inventory (may not be there if using _weaponData)
+        const _brokenIdx = p.inventory.findIndex(i => i.id === w.id);
+        if (_brokenIdx >= 0) p.inventory.splice(_brokenIdx, 1);
         // Auto-switch
         const otherSlot = p.activeSlot === 1 ? 2 : 1;
         const otherId = p[`weaponSlot${otherSlot}`];
@@ -5362,11 +5365,10 @@ function invEquipWeapon(idx) {
   const def = ITEMS[it.id];
   if (!def || def.type !== 'weapon') return;
   const slot = G.player.activeSlot || 1;
-  // Save current weapon's full state (including insertedMag) before swapping
+  // Get old weapon data from _weaponData (not inventory — it's not there)
   const oldId = slot===1 ? G.player.weaponSlot1 : G.player.weaponSlot2;
-  const oldInvItem = oldId ? G.player.inventory.find(i => i.id === oldId) : null;
-  const oldExtra = oldInvItem ? { durability: oldInvItem.durability, insertedMag: oldInvItem.insertedMag, loadedAmmo: oldInvItem.loadedAmmo } : {};
-  // Set new weapon + store full item data for getEquippedWeapon
+  const oldData = G.player[`_weaponData${slot}`];
+  // Set new weapon + store full item data
   if (slot===1) G.player.weaponSlot1 = it.id;
   else G.player.weaponSlot2 = it.id;
   G.player.equipped = it.id;
@@ -5374,10 +5376,11 @@ function invEquipWeapon(idx) {
   // Remove new weapon from inventory
   clearFromGrid(idx);
   G.player.inventory.splice(idx, 1);
-  // Put old weapon back WITH its magazine/ammo state
-  if (oldId && oldId !== 'fist') {
-    const oldData = G.player[`_weaponData${slot}`===`_weaponData1`?'_weaponData1':'_weaponData2'];
-    addItem(oldId, 1, oldExtra);
+  // Return old weapon to inventory with ALL its data (mag + ammo preserved)
+  if (oldId && oldId !== 'fist' && oldData) {
+    addItem(oldId, 1, { durability: oldData.durability, insertedMag: oldData.insertedMag, loadedAmmo: oldData.loadedAmmo });
+  } else if (oldId && oldId !== 'fist') {
+    addItem(oldId, 1);
   }
   calcWeight();
   addLog(`Экипировано в слот ${slot}: ${def.name}`, 'info');
