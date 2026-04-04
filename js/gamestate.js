@@ -1909,7 +1909,8 @@ function advanceHourTick() {
   if (G.player.moodles.bleeding > 0) {
     const parts = Object.keys(G.player.hp);
     const part = parts[Math.floor(rng.next() * parts.length)];
-    G.player.hp[part] = Math.max(0, G.player.hp[part] - 2);
+    G.player.hp[part] = Math.max(0, G.player.hp[part] - 3); // increased bleeding damage
+    G.player.hp.torso = Math.max(0, G.player.hp.torso - 1); // torso also loses from blood loss
     if(G?._dayStats) G._dayStats.wasHurt=true;
   }
   if (G.player.moodles.infection > 75) {
@@ -4089,6 +4090,7 @@ function zombieAttack() {
 function combatVictory() {
   const z = G.combatState.zombie;
   if (G.combatState._uiTimer) clearInterval(G.combatState._uiTimer);
+  if (typeof _modalStack !== 'undefined') _modalStack = []; // clear stack so old map/modals don't restore
   closeModal();
   addLog(`${z.name} уничтожен!`, 'success');
   addNoise(z.deathNoise);
@@ -5162,17 +5164,11 @@ function invEquipWeapon(idx) {
   const def = ITEMS[it.id];
   if (!def || def.type !== 'weapon') return;
   const slot = G.player.activeSlot || 1;
-  // Swap: put old weapon back to inventory
   const oldId = slot===1 ? G.player.weaponSlot1 : G.player.weaponSlot2;
-  // Set new weapon
+  // Set new weapon (weapon STAYS in inventory — getEquippedWeapon needs it there)
   if (slot===1) G.player.weaponSlot1 = it.id;
   else G.player.weaponSlot2 = it.id;
   G.player.equipped = it.id;
-  // Remove from inventory
-  clearFromGrid(idx);
-  G.player.inventory.splice(idx, 1);
-  // Put old weapon back
-  if (oldId && oldId !== 'fist') addItem(oldId, 1);
   calcWeight();
   addLog(`Экипировано в слот ${slot}: ${def.name}`, 'info');
   showInventory();
