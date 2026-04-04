@@ -250,6 +250,9 @@ const ITEMS = {
   torch:     { name:'Факел', type:'material', weight:0.4, desc:'Освещает путь, отпугивает зомби', descEn:'Lights the way, scares zombies' },
   _key:      { name:'Ключ', type:'material', weight:0.02, desc:'Ключ от замка', descEn:'Key for a lock' },
 
+  // ── Containers ──
+  key_holder: { name:'Ключница', type:'container', subtype:'key_holder', weight:0.2, capacity:10, desc:'Компактная ключница. Вмещает до 10 ключей', descEn:'Compact key holder. Holds up to 10 keys' },
+
   // ── Electronics ──
   radio:     { name:'Рация', type:'radio', weight:0.5, desc:'Портативная рация. Требует батарейки для работы', descEn:'Portable radio. Requires batteries to operate' },
   battery:   { name:'Батарейки', type:'material', weight:0.1, desc:'Батарейки для электроники', descEn:'Batteries for electronics' },
@@ -415,7 +418,7 @@ function mapIconHtml(id, size) {
 const LOOT_TABLES = {
   supermarket: { common:['canned_food','water','chips','bread','energy_bar','can_empty','bottle','soda','chocolate'], uncommon:['bandage','tape','bag','rope','cloth','magazine','cigarettes','coffee','tshirt','shorts','battery'], rare:['backpack','antibiotics','knife','whiskey','sweater','raincoat'] },
   pharmacy:    { common:['bandage','disinfectant','painkillers','vitamins'], uncommon:['antibiotics','splint','antidepressants','scrubs','hat_medic'], rare:['backpack','note','book_firstaid','bag_medic','pants_medic'] },
-  house:       { common:['water','bread','canned_food','cloth','can_empty','magazine','comics','cigarettes'], uncommon:['knife','bandage','tape','chips','hoodie','pants_jeans','sneakers','hat_cap','coffee','photo','tshirt','shirt','pants_sport','bandana','battery'], rare:['bat','painkillers','backpack','note','book_cooking','whiskey','mp3player','cards','jacket_leather','jacket','coat_winter','hat_ushanka','boots','valenki'] },
+  house:       { common:['water','bread','canned_food','cloth','can_empty','magazine','comics','cigarettes'], uncommon:['knife','bandage','tape','chips','hoodie','pants_jeans','sneakers','hat_cap','coffee','photo','tshirt','shirt','pants_sport','bandana','battery'], rare:['bat','painkillers','backpack','note','book_cooking','whiskey','mp3player','cards','jacket_leather','jacket','coat_winter','hat_ushanka','boots','valenki','key_holder'] },
   warehouse:   { common:['planks','nails','rope','tape','can_empty','scrap_metal','wire','cloth'], uncommon:['hammer','pipe','fuel','duct_tape','vest_hi','boots','crowbar','overalls','helmet','boots_rubber'], rare:['axe','backpack','note','book_mechanics','mask_gas'] },
   garage:      { common:['pipe','nails','fuel','bottle','scrap_metal','wire'], uncommon:['hammer','tape','rope','stick','crowbar','duct_tape','overalls','boots'], rare:['axe','knife','machete','jacket_leather'] },
   office:      { common:['water','chips','energy_bar','can_empty','magazine','comics'], uncommon:['bandage','painkillers','bag','cigarettes','coffee','shirt','shoes','pants_jeans','battery'], rare:['note','backpack','book_scouting','antidepressants','jacket'] },

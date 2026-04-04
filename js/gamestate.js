@@ -4625,6 +4625,21 @@ function showInventory() {
 
   // We'll position slots via JS after DOM creation (see setTimeout below)
 
+  // ── Inventory capacity indicator ──
+  const _maxSlots = maxInventorySlots();
+  const _usedSlots = G.player.inventory.length;
+  const _capPct = Math.min(100, Math.round(_usedSlots / _maxSlots * 100));
+  const _capColor = _capPct >= 90 ? 'var(--red)' : _capPct >= 70 ? 'var(--yellow)' : 'var(--green)';
+  html += `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;font-size:9px;color:var(--text-dim)">`;
+  html += `<span>🎒 ${_usedSlots}/${_maxSlots}</span>`;
+  html += `<div style="flex:1;height:3px;background:rgba(0,255,65,.1);border-radius:2px"><div style="height:100%;width:${_capPct}%;background:${_capColor};border-radius:2px"></div></div>`;
+  // Section labels
+  const eqBack = G.player.equipment?.back;
+  const eqRig = G.player.equipment?.rig;
+  if (eqBack) html += `<span style="color:var(--cyan);font-size:8px">${ITEMS[eqBack]?.name || 'Рюкзак'}</span>`;
+  if (eqRig) html += `<span style="color:var(--cyan);font-size:8px">${ITEMS[eqRig]?.name || 'Разгрузка'}</span>`;
+  html += `</div>`;
+
   // ── Grid Inventory below ──
   html += `<div class="inv-grid-panel" style="flex:1;overflow-y:auto;overflow-x:hidden;min-height:0">`;
   html += `<div class="inv-grid" style="width:${GRID_COLS*CELL_PX}px;height:${rows*CELL_PX}px;margin:0 auto">`;
@@ -4976,6 +4991,12 @@ function invCtxMenu(e, idx) {
   menuHtml += `<div onclick="assignQuickSlot(${idx},0);closeCtxMenu()">В слот 1</div>`;
   menuHtml += `<div onclick="assignQuickSlot(${idx},1);closeCtxMenu()">В слот 2</div>`;
   menuHtml += `<div onclick="assignQuickSlot(${idx},2);closeCtxMenu()">В слот 3</div>`;
+  if (def.type === 'container' && def.subtype === 'key_holder') menuHtml += `<div onclick="closeCtxMenu();showKeyHolder(${idx})">🔑 Открыть ключницу</div>`;
+  if (it.id === '_key') {
+    // Find key holder in inventory
+    const khIdx = G.player.inventory.findIndex(i => i.id === 'key_holder');
+    if (khIdx >= 0) menuHtml += `<div onclick="closeCtxMenu();putKeyInHolder(${idx},${khIdx})">🔑 В ключницу</div>`;
+  }
   menuHtml += `<div onclick="closeCtxMenu();showItemInfo('${it.id}',G.player.inventory[${idx}])">ℹ Информация</div>`;
   menuHtml += `<div onclick="invDropItem(${idx})">Бросить</div>`;
   menuHtml += `<div onclick="closeCtxMenu()">Отмена</div>`;
@@ -5008,31 +5029,105 @@ function assignQuickSlot(invIdx, slotIdx) {
 const Device = { isTouch: 'ontouchstart' in window };
 let _longPressTimer = null, _longPressTarget = null, _longPressStartX = 0, _longPressStartY = 0;
 
+let _touchDragEl = null;
+let _touchDragIdx = -1;
+let _touchDragStarted = false;
+
 function invTouchStart(e, idx) {
-  if (!Device.isTouch) return;
   const touch = e.touches[0];
   _longPressStartX = touch.clientX; _longPressStartY = touch.clientY;
   _longPressTarget = e.currentTarget;
+  _touchDragIdx = idx;
+  _touchDragStarted = false;
   _longPressTarget.style.background = 'rgba(0,255,65,0.15)';
+  // Long press → bottom sheet; short drag → move item
   _longPressTimer = setTimeout(() => {
     _longPressTarget.style.background = '';
-    showBottomSheet(idx);
-  }, 500);
+    if (!_touchDragStarted) showBottomSheet(idx);
+  }, 400);
 }
 
 function invTouchMove(e) {
-  if (!_longPressTimer) return;
   const touch = e.touches[0];
   const dx = touch.clientX - _longPressStartX, dy = touch.clientY - _longPressStartY;
-  if (Math.sqrt(dx*dx+dy*dy) > 10) {
-    clearTimeout(_longPressTimer); _longPressTimer = null;
+  const dist = Math.sqrt(dx*dx+dy*dy);
+
+  if (dist > 12 && !_touchDragStarted) {
+    // Start drag
+    _touchDragStarted = true;
+    if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
     if (_longPressTarget) _longPressTarget.style.background = '';
+    // Create floating drag ghost
+    const it = G.player.inventory[_touchDragIdx];
+    if (it) {
+      _touchDragEl = document.createElement('div');
+      _touchDragEl.style.cssText = 'position:fixed;z-index:9999;pointer-events:none;padding:4px 8px;background:rgba(0,10,0,.9);border:1px solid var(--green);border-radius:4px;color:var(--green);font-family:monospace;font-size:10px;white-space:nowrap';
+      _touchDragEl.innerHTML = `${typeof itemIconHtml==='function'?itemIconHtml(it.id,16):''} ${ITEMS[it.id]?.name||it.id}`;
+      document.body.appendChild(_touchDragEl);
+    }
+  }
+
+  if (_touchDragStarted && _touchDragEl) {
+    e.preventDefault();
+    _touchDragEl.style.left = (touch.clientX - 30) + 'px';
+    _touchDragEl.style.top = (touch.clientY - 20) + 'px';
   }
 }
 
-function invTouchEnd() {
+function invTouchEnd(e) {
   if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
   if (_longPressTarget) { _longPressTarget.style.background = ''; _longPressTarget = null; }
+
+  if (_touchDragStarted && _touchDragEl) {
+    // Find drop target — equipment slot or grid cell
+    const touch = e.changedTouches?.[0];
+    if (touch) {
+      const dropEl = document.elementFromPoint(touch.clientX, touch.clientY);
+      if (dropEl) {
+        // Check if dropped on equipment slot
+        const slotEl = dropEl.closest?.('[data-eq-slot]');
+        if (slotEl) {
+          const slot = slotEl.dataset.eqSlot;
+          const it = G.player.inventory[_touchDragIdx];
+          const def = ITEMS[it?.id];
+          if (def?.type === 'clothing' && def?.slot === slot) {
+            invEquipClothing(_touchDragIdx);
+          } else if (def?.type === 'weapon' && (slot === 'weapon1' || slot === 'weapon2')) {
+            invEquipWeapon(_touchDragIdx);
+          }
+        }
+        // Check if dropped on another inventory item (swap or load magazine)
+        const itemEl = dropEl.closest?.('[data-idx]');
+        if (itemEl && itemEl.dataset.idx) {
+          const targetIdx = parseInt(itemEl.dataset.idx);
+          if (targetIdx !== _touchDragIdx && targetIdx >= 0) {
+            const srcItem = G.player.inventory[_touchDragIdx];
+            const tgtItem = G.player.inventory[targetIdx];
+            if (srcItem && tgtItem) {
+              // Magazine → Weapon (insert mag)
+              if (ITEMS[srcItem.id]?.type === 'magazine' && ITEMS[tgtItem.id]?.subtype === 'firearm' && ITEMS[tgtItem.id]?.magType === srcItem.id) {
+                invInsertMag(targetIdx, _touchDragIdx);
+              }
+              // Ammo → Magazine (load)
+              else if (ITEMS[srcItem.id]?.type === 'ammo' && ITEMS[tgtItem.id]?.type === 'magazine' && ITEMS[srcItem.id]?.caliber === ITEMS[tgtItem.id]?.caliber) {
+                invLoadMag(targetIdx);
+              }
+              // Swap positions
+              else {
+                G.player.inventory[_touchDragIdx] = tgtItem;
+                G.player.inventory[targetIdx] = srcItem;
+                showInventory();
+              }
+            }
+          }
+        }
+      }
+    }
+    _touchDragEl.remove();
+    _touchDragEl = null;
+  }
+  _touchDragStarted = false;
+  _touchDragIdx = -1;
 }
 
 function showBottomSheet(idx) {
@@ -5258,6 +5353,68 @@ function invUseMedicine(idx) { closeCtxMenu(); useMedicine(idx); showInventory()
 function invUseBook(idx) { closeCtxMenu(); useBook(idx); showInventory(); }
 function invUseComfort(idx) { closeCtxMenu(); useComfort(idx); showInventory(); }
 function invDropItem(idx) { closeCtxMenu(); dropItem(idx); showInventory(); }
+
+// ── Key Holder ──
+function showKeyHolder(holderIdx) {
+  const holder = G.player.inventory[holderIdx];
+  if (!holder || holder.id !== 'key_holder') return;
+  if (!holder.keys) holder.keys = [];
+  const isEn = LANG?.current === 'en';
+  let html = `<div style="color:var(--text-dim);font-size:10px;margin-bottom:6px">${isEn ? 'Keys' : 'Ключи'}: ${holder.keys.length}/${ITEMS.key_holder.capacity}</div>`;
+  html += '<div style="max-height:40vh;overflow-y:auto">';
+  if (holder.keys.length === 0) {
+    html += `<div style="text-align:center;color:var(--text-muted);padding:12px">${isEn ? 'Empty' : 'Пусто'}</div>`;
+  } else {
+    holder.keys.forEach((key, ki) => {
+      html += `<div class="inv-item" style="padding:4px 6px"><div class="item-info"><span style="font-size:10px">🔑 ${key.keyName || 'Ключ'}</span></div>`;
+      html += `<button class="act-btn" style="flex:0;min-width:50px;font-size:8px" onclick="takeKeyFromHolder(${holderIdx},${ki})">Взять</button></div>`;
+    });
+  }
+  html += '</div>';
+  // List keys in inventory that can be added
+  const freeKeys = G.player.inventory.filter((it, i) => it.id === '_key').length;
+  if (freeKeys > 0 && holder.keys.length < ITEMS.key_holder.capacity) {
+    html += `<button class="act-btn" onclick="putAllKeysInHolder(${holderIdx})" style="width:100%;padding:6px;margin-top:6px;border-color:var(--green);color:var(--green)">🔑 Сложить все ключи (${freeKeys})</button>`;
+  }
+  html += `<button class="act-btn" onclick="showInventory()" style="width:100%;padding:6px;margin-top:4px">${isEn ? 'Back' : 'Назад'}</button>`;
+  openModal('🔑 ' + (isEn ? 'Key Holder' : 'Ключница'), html);
+}
+
+function putKeyInHolder(keyIdx, holderIdx) {
+  const key = G.player.inventory[keyIdx];
+  const holder = G.player.inventory[holderIdx];
+  if (!key || !holder || key.id !== '_key' || holder.id !== 'key_holder') return;
+  if (!holder.keys) holder.keys = [];
+  if (holder.keys.length >= ITEMS.key_holder.capacity) { addLog('Ключница полна!', 'warning'); return; }
+  holder.keys.push({ keyId: key.keyId, keyName: key.keyName });
+  G.player.inventory.splice(keyIdx, 1);
+  addLog(`🔑 ${key.keyName || 'Ключ'} → ключница`, 'success');
+  showInventory();
+}
+
+function putAllKeysInHolder(holderIdx) {
+  const holder = G.player.inventory[holderIdx];
+  if (!holder || holder.id !== 'key_holder') return;
+  if (!holder.keys) holder.keys = [];
+  for (let i = G.player.inventory.length - 1; i >= 0; i--) {
+    if (G.player.inventory[i].id === '_key' && holder.keys.length < ITEMS.key_holder.capacity) {
+      const key = G.player.inventory[i];
+      holder.keys.push({ keyId: key.keyId, keyName: key.keyName });
+      G.player.inventory.splice(i, 1);
+    }
+  }
+  addLog('🔑 Все ключи сложены в ключницу', 'success');
+  showKeyHolder(G.player.inventory.indexOf(holder));
+}
+
+function takeKeyFromHolder(holderIdx, keyIdx) {
+  const holder = G.player.inventory[holderIdx];
+  if (!holder?.keys?.[keyIdx]) return;
+  const key = holder.keys.splice(keyIdx, 1)[0];
+  addItem('_key', 1, { keyId: key.keyId, keyName: key.keyName });
+  addLog(`🔑 ${key.keyName || 'Ключ'} из ключницы`, 'success');
+  showKeyHolder(holderIdx);
+}
 
 // ── Weapon ammo actions from inventory ──
 function invEjectMag(idx) {
