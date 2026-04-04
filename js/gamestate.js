@@ -5044,8 +5044,32 @@ function showBottomSheet(idx) {
   const displayName = it.keyName || def.name;
 
   let menuHtml = `<div style="text-align:center;padding:8px 0;font-size:12px;color:var(--green);border-bottom:1px solid var(--border);margin-bottom:6px">${displayName}</div>`;
-  if (def.type === 'weapon') menuHtml += `<div class="bs-item" onclick="invEquipWeapon(${idx});closeBottomSheet()">Экипировать</div>`;
-  if (def.type === 'clothing') menuHtml += `<div class="bs-item" onclick="invEquipClothing(${idx});closeBottomSheet()">Надеть</div>`;
+  if (def.type === 'weapon') {
+    menuHtml += `<div class="bs-item" onclick="invEquipWeapon(${idx});closeBottomSheet()">⚔ Экипировать</div>`;
+    if (def.subtype === 'firearm') {
+      if (def.magType && !def.noMag) {
+        if (it.insertedMag) {
+          menuHtml += `<div class="bs-item" onclick="invEjectMag(${idx});closeBottomSheet()">⬆ Извлечь магазин</div>`;
+        } else {
+          const _bsMagIdx = G.player.inventory.findIndex(m => m.id === def.magType);
+          if (_bsMagIdx >= 0) menuHtml += `<div class="bs-item" onclick="invInsertMag(${idx},${_bsMagIdx});closeBottomSheet()">⬇ Вставить магазин</div>`;
+        }
+      }
+      if (def.noMag) {
+        const _bsAmmoId = typeof getAmmoIdForCaliber==='function' ? getAmmoIdForCaliber(def.caliber) : null;
+        const _bsLoaded = it.loadedAmmo || 0;
+        if (_bsAmmoId && hasItem(_bsAmmoId) && _bsLoaded < def.magSize) menuHtml += `<div class="bs-item" onclick="invLoadDirect(${idx});closeBottomSheet()">🔫 Зарядить</div>`;
+        if (_bsLoaded > 0) menuHtml += `<div class="bs-item" onclick="invUnloadDirect(${idx});closeBottomSheet()">📤 Разрядить</div>`;
+      }
+    }
+  }
+  if (def.type === 'magazine') {
+    const _bsMAmmoId = typeof getAmmoIdForCaliber==='function' ? getAmmoIdForCaliber(def.caliber) : null;
+    const _bsMLoaded = it.loadedAmmo || 0;
+    if (_bsMAmmoId && hasItem(_bsMAmmoId) && _bsMLoaded < def.capacity) menuHtml += `<div class="bs-item" onclick="invLoadMag(${idx});closeBottomSheet()">🔫 Зарядить магазин</div>`;
+    if (_bsMLoaded > 0) menuHtml += `<div class="bs-item" onclick="invUnloadMag(${idx});closeBottomSheet()">📤 Разрядить магазин</div>`;
+  }
+  if (def.type === 'clothing') menuHtml += `<div class="bs-item" onclick="invEquipClothing(${idx});closeBottomSheet()">👕 Надеть</div>`;
   if (def.type === 'food') menuHtml += `<div class="bs-item" onclick="invUseFood(${idx});closeBottomSheet()">Съесть</div>`;
   if (def.type === 'medicine') menuHtml += `<div class="bs-item" onclick="invUseMedicine(${idx});closeBottomSheet()">Применить</div>`;
   if (def.type === 'book') menuHtml += `<div class="bs-item" onclick="invUseBook(${idx});closeBottomSheet()">Читать</div>`;

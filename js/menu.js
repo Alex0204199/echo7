@@ -433,6 +433,42 @@ function renderSettings() {
       <span style="color:var(--text)">Колесо мыши</span> — зум карты
     </div>
 
+    <div style="color:var(--text-dim);font-size:10px;letter-spacing:.12em;text-transform:uppercase;margin:14px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border)">${LANG.current==='en'?'Multiplayer':'Мультиплеер'}</div>
+
+    <div class="settings-row">
+      <div class="s-label">${LANG.current==='en'?'Show player names':'Имена игроков'}</div>
+      <div class="s-value">
+        <div class="s-toggle ${settings.showPlayerNames !== false ? 'on' : ''}" onclick="settingToggle('showPlayerNames',this)"></div>
+      </div>
+    </div>
+    <div class="settings-row">
+      <div class="s-label">${LANG.current==='en'?'Chat notifications':'Уведомления чата'}</div>
+      <div class="s-value">
+        <div class="s-toggle ${settings.chatNotify !== false ? 'on' : ''}" onclick="settingToggle('chatNotify',this)"></div>
+      </div>
+    </div>
+    <div class="settings-row">
+      <div class="s-label">${LANG.current==='en'?'Auto-accept party':'Авто-принять группу'}</div>
+      <div class="s-value">
+        <div class="s-toggle ${settings.autoAcceptParty ? 'on' : ''}" onclick="settingToggle('autoAcceptParty',this)"></div>
+      </div>
+    </div>
+
+    <div style="color:var(--text-dim);font-size:10px;letter-spacing:.12em;text-transform:uppercase;margin:14px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border)">${LANG.current==='en'?'Notifications':'Уведомления'}</div>
+
+    <div class="settings-row">
+      <div class="s-label">${LANG.current==='en'?'Vibration':'Вибрация'}</div>
+      <div class="s-value">
+        <div class="s-toggle ${settings.vibration !== false ? 'on' : ''}" onclick="settingToggle('vibration',this)"></div>
+      </div>
+    </div>
+    <div class="settings-row">
+      <div class="s-label">${LANG.current==='en'?'Combat alerts':'Уведомления о бое'}</div>
+      <div class="s-value">
+        <div class="s-toggle ${settings.combatAlerts !== false ? 'on' : ''}" onclick="settingToggle('combatAlerts',this)"></div>
+      </div>
+    </div>
+
     <div style="color:var(--text-dim);font-size:10px;letter-spacing:.12em;text-transform:uppercase;margin:14px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border)">${LANG.current==='en'?'Developer':'Разработчик'}</div>
     <div class="settings-row">
       <div class="s-label">${t('set.devMode')}</div>
@@ -507,8 +543,8 @@ function renderAbout() {
   document.getElementById('about-content').innerHTML = `
     <div style="text-align:center;padding:10px 0 16px">
       <div style="color:var(--green);font-size:24px;letter-spacing:.3em;text-shadow:0 0 15px rgba(0,255,65,.3);margin-bottom:4px">ECHO-7</div>
-      <div style="color:var(--cyan);font-size:10px;letter-spacing:.25em">SURVIVAL HORROR SIMULATION v2.0</div>
-      <div style="color:var(--text-dim);font-size:9px;letter-spacing:.15em;margin-top:6px">Build 2.0 &middot; 2025</div>
+      <div style="color:var(--cyan);font-size:10px;letter-spacing:.25em">SURVIVAL HORROR SIMULATION v3.0</div>
+      <div style="color:var(--text-dim);font-size:9px;letter-spacing:.15em;margin-top:6px">Build 3.0 &middot; 2026 &middot; Multiplayer</div>
     </div>
 
     <div style="border:1px solid var(--border);padding:12px;margin-bottom:10px">
@@ -524,15 +560,17 @@ function renderAbout() {
     <div style="border:1px solid var(--border);padding:12px;margin-bottom:10px">
       <div style="color:var(--green-dim);font-size:10px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px">Возможности</div>
       <div style="font-size:11px;color:var(--text-dim);line-height:1.8">
+        ▸ Мультиплеер до 20 игроков (WebSocket)<br>
         ▸ Процедурная генерация мира с 4 регионами<br>
-        ▸ Изометрическая карта в стиле SimCity 2000<br>
-        ▸ 100+ предметов: оружие, еда, медикаменты, одежда<br>
-        ▸ Система навыков и профессий<br>
-        ▸ Продвинутый инвентарь в стиле Escape from Tarkov<br>
-        ▸ Крафт, баррикады, система баз<br>
-        ▸ Динамическая система боя с огнестрельным оружием<br>
-        ▸ Процедурная аудиосистема без внешних файлов<br>
-        ▸ Point Cloud / LIDAR рендер основного вида<br>
+        ▸ Изометрическая карта с 3D зданиями<br>
+        ▸ 145+ предметов: оружие, магазины, патроны, еда, медикаменты, одежда<br>
+        ▸ 12 профессий, 22 черты, 8 навыков<br>
+        ▸ Инвентарь в стиле Escape from Tarkov<br>
+        ▸ Совместный бой с кулдаунами, блоком, комбо<br>
+        ▸ Система лора: рация, записки, триггерные события<br>
+        ▸ Торговля, группы, следование, эмоции<br>
+        ▸ Крафт, базы, погода, времена года<br>
+        ▸ Point Cloud / LIDAR рендер<br>
         ▸ Полностью оффлайн, без зависимостей
       </div>
     </div>
