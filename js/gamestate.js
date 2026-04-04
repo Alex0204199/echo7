@@ -1987,6 +1987,12 @@ function tickRealTime(now) {
     return;
   }
 
+  // Autosave every 5 minutes
+  if (G._lastSaveTime && Date.now() - G._lastSaveTime > 300000) {
+    saveGame();
+    _showSaveIndicator();
+  }
+
   // 1 real second = 1 game minute (only HOST or OFFLINE advances time)
   if (typeof Net === 'undefined' || Net.mode !== 'CLIENT') {
     G.realTimeAccum = (G.realTimeAccum || 0) + dt;
@@ -5730,7 +5736,9 @@ function useFood(idx) {
     G.player.moodles.pain = Math.min(100, G.player.moodles.pain + 5);
     G.player.moodles.depression = Math.min(100, (G.player.moodles.depression || 0) + 3);
   } else {
-    if (def.hunger) G.player.moodles.hunger = Math.max(0, G.player.moodles.hunger + def.hunger);
+    // Cooking skill bonus: +10% nutrition per level (up to +50%)
+    const cookBonus = 1 + (G.player.skills.cooking || 0) * 0.1;
+    if (def.hunger) G.player.moodles.hunger = Math.max(0, G.player.moodles.hunger + Math.round(def.hunger * cookBonus));
     if (def.thirst) G.player.moodles.thirst = Math.max(0, G.player.moodles.thirst + def.thirst);
     if (def.painRelief) G.player.moodles.pain = Math.max(0, G.player.moodles.pain - def.painRelief);
     if (def.fatigue) G.player.moodles.fatigue = Math.max(0, G.player.moodles.fatigue + def.fatigue);
@@ -5750,42 +5758,51 @@ function useFood(idx) {
 function useMedicine(idx) {
   const item = G.player.inventory[idx];
   const def = ITEMS[item.id];
+  const faSkill = G.player.skills.firstAid || 0;
+  const faBonus = 1 + faSkill * 0.15; // +15% per firstAid level (up to +75% at level 5)
   switch (def.subtype) {
     case 'bandage':
       G.player.moodles.bleeding = 0;
-      addLog('Кровотечение остановлено.', 'success');
+      // FirstAid bonus: also heals HP
+      const bandageHeal = Math.round(5 * faBonus);
+      Object.keys(G.player.hp).forEach(k => { G.player.hp[k] = Math.min(100, G.player.hp[k] + bandageHeal); });
+      addLog(`Кровотечение остановлено. +${bandageHeal} HP.`, 'success');
       break;
     case 'antibiotics':
       if (!G.difficulty.infectionCure && G.player.moodles.infection >= 70) {
         addLog('Заражение слишком сильное. Антибиотики бессильны.', 'danger');
         return;
       }
-      G.player.moodles.infection = Math.max(0, G.player.moodles.infection - 30);
-      addLog('Антибиотики приняты. Заражение снижено.', 'success');
+      const abReduce = Math.round(30 * faBonus);
+      G.player.moodles.infection = Math.max(0, G.player.moodles.infection - abReduce);
+      addLog(`Антибиотики приняты. Заражение −${abReduce}.`, 'success');
       break;
     case 'painkillers':
-      G.player.moodles.pain = Math.max(0, G.player.moodles.pain - 40);
-      addLog('Обезболивающее принято.', 'success');
+      const pkReduce = Math.round(40 * faBonus);
+      G.player.moodles.pain = Math.max(0, G.player.moodles.pain - pkReduce);
+      addLog(`Обезболивающее принято. Боль −${pkReduce}.`, 'success');
       break;
-    case 'splint':
-      // Find most damaged limb
+    case 'splint': {
       const limbs = ['armL','armR','legL','legR'];
       const worst = limbs.reduce((a, b) => G.player.hp[a] < G.player.hp[b] ? a : b);
-      G.player.hp[worst] = Math.min(100, G.player.hp[worst] + 30);
+      const splintHeal = Math.round(30 * faBonus);
+      G.player.hp[worst] = Math.min(100, G.player.hp[worst] + splintHeal);
       const partNames = { armL:'Л.рука', armR:'П.рука', legL:'Л.нога', legR:'П.нога' };
-      addLog(`Шина наложена на ${partNames[worst]}. +30 HP.`, 'success');
+      addLog(`Шина наложена на ${partNames[worst]}. +${splintHeal} HP.`, 'success');
       break;
+    }
     case 'disinfectant':
-      G.player.moodles.infection = Math.max(0, G.player.moodles.infection - 15);
-      addLog('Раны продезинфицированы.', 'success');
+      const disReduce = Math.round(15 * faBonus);
+      G.player.moodles.infection = Math.max(0, G.player.moodles.infection - disReduce);
+      addLog(`Раны продезинфицированы. Инфекция −${disReduce}.`, 'success');
       break;
     case 'vitamins':
-      G.player.moodles.depression = Math.max(0, (G.player.moodles.depression || 0) - 10);
-      G.player.moodles.fatigue = Math.max(0, G.player.moodles.fatigue - 10);
+      G.player.moodles.depression = Math.max(0, (G.player.moodles.depression || 0) - Math.round(10 * faBonus));
+      G.player.moodles.fatigue = Math.max(0, G.player.moodles.fatigue - Math.round(10 * faBonus));
       addLog('Витамины приняты. Бодрость и настроение улучшены.', 'success');
       break;
     case 'antidepressants':
-      G.player.moodles.depression = Math.max(0, (G.player.moodles.depression || 0) - 35);
+      G.player.moodles.depression = Math.max(0, (G.player.moodles.depression || 0) - Math.round(35 * faBonus));
       addLog('Антидепрессанты приняты. Депрессия значительно снижена.', 'success');
       break;
   }
@@ -8081,12 +8098,23 @@ function playerDeath(cause) {
 function saveGame() {
   if (!G) return;
   G._lastSaveTime = Date.now();
-  // Convert Set to Array BEFORE serialization (Set → {} in JSON)
   const explArr = [...(G.world.exploredLocations || [])];
   G.world.exploredLocations = explArr;
   const json = JSON.stringify(G);
   G.world.exploredLocations = new Set(explArr);
   localStorage.setItem('echo7_save', json);
+}
+
+function _showSaveIndicator() {
+  let el = document.getElementById('save-indicator');
+  if (el) { el.remove(); }
+  el = document.createElement('div');
+  el.id = 'save-indicator';
+  el.style.cssText = 'position:fixed;top:8px;right:8px;z-index:9000;font-family:monospace;font-size:9px;color:var(--green);opacity:0.7;pointer-events:none;transition:opacity 1s';
+  el.textContent = '💾';
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; }, 1500);
+  setTimeout(() => el.remove(), 2500);
 }
 
 function loadGame() {
