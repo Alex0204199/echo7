@@ -313,9 +313,9 @@ body::after{content:'';position:fixed;inset:0;opacity:.03;background:url("data:i
 .travel-dest button{min-height:36px}
 
 /* ENCOUNTER */
-.encounter-title{color:var(--red);font-size:16px;font-weight:bold;margin-bottom:10px;letter-spacing:.1em}
-.encounter-info{color:var(--text);font-size:12px;margin-bottom:12px;line-height:1.6}
-.encounter-actions{display:flex;flex-direction:column;gap:6px}
+.encounter-title{color:var(--red);font-size:16px;font-weight:bold;margin-bottom:10px;letter-spacing:.1em;text-shadow:0 0 10px rgba(255,34,68,.3)}
+.encounter-info{color:var(--text);font-size:12px;margin-bottom:12px;line-height:1.6;padding:10px;background:rgba(0,0,0,.3);border:1px solid rgba(255,34,68,.08);border-radius:var(--radius);backdrop-filter:blur(4px)}
+.encounter-actions{display:flex;flex-wrap:wrap;gap:4px}
 .encounter-actions button{min-height:44px}
 
 /* ══ CHARACTER CREATION ══ */
@@ -589,6 +589,54 @@ body::after{content:'';position:fixed;inset:0;opacity:.03;background:url("data:i
 .fx-craft-sparks{position:absolute;inset:0;overflow:visible}
 .fx-craft-spark{position:absolute;top:50%;left:50%;width:3px;height:3px;border-radius:50%;background:var(--cyan);opacity:0;animation:fxSparkFly .7s var(--delay) ease-out forwards}
 @keyframes fxSparkFly{0%{transform:translate(0,0);opacity:1}100%{transform:translate(var(--sx),var(--sy));opacity:0}}
+
+/* ═══ PREMIUM EFFECTS ═══ */
+
+/* 1. Neon glow button (search/scan) */
+@property --neon-angle{syntax:'<angle>';initial-value:0deg;inherits:false}
+.act-btn.neon-scan{position:relative;overflow:visible}
+.act-btn.neon-scan::after{content:'';position:absolute;inset:-2px;border-radius:6px;background:conic-gradient(from var(--neon-angle),transparent 60%,var(--green) 80%,transparent);animation:neonSpin 2.5s linear infinite;opacity:0;transition:opacity .3s;z-index:-1}
+.act-btn.neon-scan:hover::after,.act-btn.neon-scan:active::after{opacity:.5}
+@keyframes neonSpin{to{--neon-angle:360deg}}
+
+/* 2. Glitch title + letter flicker */
+.menu-title.glitch-fx{position:relative}
+.menu-title.glitch-fx::before,.menu-title.glitch-fx::after{content:attr(data-text);position:absolute;top:0;left:0;width:100%;height:100%}
+.menu-title.glitch-fx::before{animation:glitchClip1 3s infinite;color:#00e5ff;z-index:-1;clip-path:polygon(0 0,100% 0,100% 40%,0 40%)}
+.menu-title.glitch-fx::after{animation:glitchClip2 3s infinite;color:#ff2244;z-index:-2;clip-path:polygon(0 60%,100% 60%,100% 100%,0 100%)}
+@keyframes glitchClip1{0%,92%,100%{transform:none}93%{transform:translate(-4px,-1px)}96%{transform:translate(3px,1px)}}
+@keyframes glitchClip2{0%,92%,100%{transform:none}94%{transform:translate(4px,1px)}97%{transform:translate(-3px,-1px)}}
+.flicker-letter{display:inline-block;animation:letterFlicker 4s ease-in-out infinite}
+.flicker-letter:nth-child(2){animation-delay:1.2s}
+.flicker-letter:nth-child(4){animation-delay:2.8s}
+.flicker-letter:nth-child(5){animation-delay:.6s}
+@keyframes letterFlicker{0%,88%,92%,96%,100%{opacity:1}89%{opacity:.2}91%{opacity:.8}93%{opacity:.1}95%{opacity:.9}}
+
+/* 3. Glass card (for modals, combat, info panels) */
+.glass-panel{background:rgba(5,15,5,.6);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(0,255,65,.08);border-radius:var(--radius-lg);box-shadow:0 8px 32px rgba(0,0,0,.3);position:relative;overflow:hidden}
+.glass-panel::before{content:'';position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle at 30% 30%,rgba(0,255,65,.03),transparent 50%);pointer-events:none}
+
+/* 6. Gradient border spin (rare/legendary loot) */
+.gradient-spin-border{position:relative;border-radius:var(--radius-lg);overflow:visible}
+.gradient-spin-border::before{content:'';position:absolute;inset:-2px;border-radius:calc(var(--radius-lg) + 2px);background:conic-gradient(from var(--neon-angle),#00ff41,#00e5ff,#ff2244,#ffe000,#00ff41);animation:neonSpin 3s linear infinite;z-index:-1}
+.gradient-spin-border::after{content:'';position:absolute;inset:0;border-radius:var(--radius-lg);background:var(--surface);z-index:-1}
+
+/* 8. CSS particles (menu background enhancement) */
+.css-particle{position:absolute;width:2px;height:2px;background:var(--green);border-radius:50%;box-shadow:0 0 4px var(--green);opacity:.5;animation:cssFloat 4s ease-in-out infinite;pointer-events:none}
+@keyframes cssFloat{0%{transform:translateY(0);opacity:0}10%{opacity:.5}90%{opacity:.5}100%{transform:translateY(-80px);opacity:0}}
+
+/* 9. Toast notification style */
+.toast-notify{padding:10px 14px;border-left:3px solid var(--green);border-radius:0 var(--radius-lg) var(--radius-lg) 0;background:linear-gradient(90deg,rgba(0,255,65,.06),rgba(5,15,5,.9));backdrop-filter:blur(8px);box-shadow:0 4px 20px rgba(0,0,0,.3),0 0 10px rgba(0,255,65,.04);animation:toastSlide .4s cubic-bezier(.17,.67,.29,1.4);position:relative;overflow:hidden}
+.toast-notify::after{content:'';position:absolute;top:0;left:0;width:100%;height:1px;background:linear-gradient(90deg,var(--green),transparent)}
+.toast-notify.danger{border-left-color:var(--red)}
+.toast-notify.danger::after{background:linear-gradient(90deg,var(--red),transparent)}
+.toast-notify.cyan{border-left-color:var(--cyan)}
+.toast-notify.cyan::after{background:linear-gradient(90deg,var(--cyan),transparent)}
+@keyframes toastSlide{from{transform:translateX(-20px);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* 13. Ambient glow orbs */
+.glow-orb{position:absolute;border-radius:50%;filter:blur(40px);pointer-events:none;animation:orbDrift 8s ease-in-out infinite}
+@keyframes orbDrift{0%,100%{transform:translate(0,0)}33%{transform:translate(15px,-10px)}66%{transform:translate(-10px,8px)}}
 </style>
 </head>
 <body>
@@ -596,9 +644,13 @@ body::after{content:'';position:fixed;inset:0;opacity:.03;background:url("data:i
 <!-- MAIN MENU -->
 <div id="title-screen">
   <canvas id="menu-bg"></canvas>
+  <!-- Ambient glow orbs -->
+  <div class="glow-orb" style="width:150px;height:150px;background:#00ff41;opacity:.08;top:15%;left:10%"></div>
+  <div class="glow-orb" style="width:100px;height:100px;background:#00e5ff;opacity:.06;top:50%;left:70%;animation-delay:3s"></div>
+  <div class="glow-orb" style="width:80px;height:80px;background:#ff2244;opacity:.04;top:70%;left:30%;animation-delay:5s;animation-duration:10s"></div>
   <div id="menu-content">
     <div class="menu-title-wrap">
-      <div class="menu-title">ECHO-7</div>
+      <div class="menu-title glitch-fx" data-text="ECHO-7"><span class="flicker-letter">E</span><span class="flicker-letter">C</span><span>H</span><span class="flicker-letter">O</span><span class="flicker-letter">-</span><span>7</span></div>
       <div class="menu-subtitle">SURVIVAL HORROR SIMULATION</div>
       <div class="menu-version">v2.0 · INSPIRED BY PROJECT ZOMBOID</div>
     </div>

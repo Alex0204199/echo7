@@ -265,7 +265,8 @@ function updateUI() {
   actions.forEach(a => {
     if (!a.show) return;
     const btn = document.createElement('button');
-    btn.className = `act-btn ${a.cls || ''}`;
+    const neonClass = (a.id === 'search' || a.id === 'radio') ? ' neon-scan' : '';
+    btn.className = `act-btn ${a.cls || ''}${neonClass}`;
     btn.innerHTML = `${uiIconHtml(a.uiIcon,22)}${a.label}`;
     btn.onclick = () => { ensureAudio(); doAction(a.id); };
     if (!G.player.alive) btn.disabled = true;
@@ -383,7 +384,10 @@ function updateUI() {
 function addLog(text, cls = '') {
   const log = document.getElementById('log');
   const entry = document.createElement('div');
-  entry.className = `log-entry ${cls}`;
+  // Apply toast style for important messages
+  const isToast = cls === 'success' || cls === 'danger' || cls === 'lore';
+  const toastCls = cls === 'danger' ? ' danger' : cls === 'lore' ? ' cyan' : '';
+  entry.className = `log-entry ${cls}${isToast ? ' toast-notify' + toastCls : ''}`;
   const ts = G ? `<span class="ts">${getTimeString()}</span>` : '';
   entry.innerHTML = ts + text;
   log.appendChild(entry);
