@@ -4640,9 +4640,34 @@ function showInventory() {
   if (eqRig) html += `<span style="color:var(--cyan);font-size:8px">${ITEMS[eqRig]?.name || 'Разгрузка'}</span>`;
   html += `</div>`;
 
-  // ── Grid Inventory below ──
+  // ── Grid Inventory with section markers ──
+  const _pocketSlots = 20;
+  const _rigSlots = eqRig ? 4 : 0;
+  const _backSlots = eqBack ? (eqBack === 'backpack' ? 10 : (eqBack.includes?.('bag') || ITEMS[eqBack]?.id?.includes?.('bag')) ? 8 : 5) : 0;
+  const _pocketRows = Math.ceil(_pocketSlots / GRID_COLS);
+  const _rigStartRow = _pocketRows;
+  const _backStartRow = _pocketRows + Math.ceil(_rigSlots / GRID_COLS);
+
   html += `<div class="inv-grid-panel" style="flex:1;overflow-y:auto;overflow-x:hidden;min-height:0">`;
   html += `<div class="inv-grid" style="width:${GRID_COLS*CELL_PX}px;height:${rows*CELL_PX}px;margin:0 auto">`;
+  for (let r=0;r<rows;r++) {
+    // Section separator labels
+    if (r === 0) {
+      html += `<div style="position:absolute;left:0;top:${r*CELL_PX - 10}px;font-size:7px;color:var(--text-muted);pointer-events:none;z-index:1">🧥 Карманы</div>`;
+    }
+    if (_rigSlots > 0 && r === _rigStartRow) {
+      html += `<div style="position:absolute;left:0;top:${r*CELL_PX - 10}px;width:${GRID_COLS*CELL_PX}px;border-top:1px solid rgba(0,229,255,.2);font-size:7px;color:var(--cyan);pointer-events:none;z-index:1">🦺 ${ITEMS[eqRig]?.name||'Разгрузка'}</div>`;
+    }
+    if (_backSlots > 0 && r === _backStartRow) {
+      html += `<div style="position:absolute;left:0;top:${r*CELL_PX - 10}px;width:${GRID_COLS*CELL_PX}px;border-top:1px solid rgba(0,255,65,.2);font-size:7px;color:var(--green);pointer-events:none;z-index:1">🎒 ${ITEMS[eqBack]?.name||'Рюкзак'}</div>`;
+    }
+    for (let c=0;c<GRID_COLS;c++) {
+      const isRig = _rigSlots > 0 && r >= _rigStartRow && r < _backStartRow;
+      const isBack = _backSlots > 0 && r >= _backStartRow;
+      const bg = isRig ? 'background:rgba(0,229,255,.03)' : isBack ? 'background:rgba(0,255,65,.03)' : '';
+      html += `<div class="inv-cell" style="left:${c*CELL_PX}px;top:${r*CELL_PX}px;${bg}" data-gx="${c}" data-gy="${r}" ondragover="invDragOver(event)" ondrop="invGridDrop(event,${c},${r})"></div>`;
+    }
+  }
   for (let r=0;r<rows;r++) for (let c=0;c<GRID_COLS;c++) {
     html += `<div class="inv-cell" style="left:${c*CELL_PX}px;top:${r*CELL_PX}px" data-gx="${c}" data-gy="${r}" ondragover="invDragOver(event)" ondrop="invGridDrop(event,${c},${r})"></div>`;
   }
@@ -4765,6 +4790,7 @@ function showCreativePanel() {
     {name:'Комфорт', filter: it => it.type==='comfort'},
     {name:'Книги', filter: it => it.type==='book'},
     {name:'Электроника', filter: it => it.type==='radio'},
+    {name:'Контейнеры', filter: it => it.type==='container'},
     {name:'Лор', filter: it => it.type==='lore'},
   ];
 
@@ -4908,14 +4934,11 @@ function invSlotDrop(e, slotKey) {
   if (slotKey === 'weapon1' || slotKey === 'weapon2') {
     if (def.type !== 'weapon') return;
     const slotNum = slotKey === 'weapon1' ? 1 : 2;
-    // Swap if slot occupied
     const oldId = slotNum===1 ? G.player.weaponSlot1 : G.player.weaponSlot2;
     if (slotNum===1) G.player.weaponSlot1 = it.id;
     else G.player.weaponSlot2 = it.id;
     if (G.player.activeSlot === slotNum) G.player.equipped = it.id;
-    // Remove from inventory
-    clearFromGrid(idx);
-    G.player.inventory.splice(idx, 1);
+    // Weapon STAYS in inventory (getEquippedWeapon needs it there, insertedMag preserved)
   } else {
     if (def.type !== 'clothing' || def.slot !== slotKey) return;
     // Unequip current if any
