@@ -2062,6 +2062,41 @@ function isEncumbered() {
   return G.player.weight > maxWeight();
 }
 
+// Active debuff multipliers
+function getDebuffMult(type) {
+  const p = G?.player;
+  if (!p) return 1;
+  switch(type) {
+    case 'searchSpeed': // higher = slower search
+      let sm = 1;
+      if (p.moodles.depression > 60) sm *= 1.5;
+      if (p.moodles.fatigue > 80) sm *= 1.3;
+      if (p.moodles.pain > 60) sm *= 1.2;
+      return sm;
+    case 'accuracy': // subtracted from hit chance
+      let acc = 0;
+      if (p.moodles.pain > 60) acc += 20;
+      if (p.moodles.fatigue > 80) acc += 15;
+      if (p.moodles.bodyTemp < 34) acc += 15;
+      if (isEncumbered()) acc += 10;
+      return acc;
+    case 'moveSpeed': // 0..1, lower = slower
+      let ms = 1;
+      if (isEncumbered()) ms *= 0.6;
+      if (p.moodles.pain > 60) ms *= 0.8;
+      if (p.moodles.fatigue > 80) ms *= 0.7;
+      if (p.moodles.bodyTemp < 34) ms *= 0.6;
+      if (p.hp.legL < 30 || p.hp.legR < 30) ms *= 0.5;
+      return ms;
+    case 'noise': // multiplier for noise generation
+      let nm = 1;
+      if (isEncumbered()) nm *= 1.5;
+      if (p.moodles.fatigue > 80) nm *= 1.3;
+      return nm;
+    default: return 1;
+  }
+}
+
 function getMoodleLevel(val) {
   if (val < 20) return 'ok';
   if (val < 45) return 'mild';
@@ -2089,7 +2124,10 @@ function getMoodleModifier() {
   return mod;
 }
 
-function addNoise(amount) { G.player.moodles.noise = Math.min(100, G.player.moodles.noise + amount); }
+function addNoise(amount) {
+  const mult = typeof getDebuffMult === 'function' ? getDebuffMult('noise') : 1;
+  G.player.moodles.noise = Math.min(100, G.player.moodles.noise + Math.round(amount * mult));
+}
 
 function getTotalHp() {
   const hp = G.player.hp;
@@ -2977,7 +3015,8 @@ function searchContainer(ci) {
   if (!cont.searched) {
     // 3-second search animation
     addLog(`Обыскиваю: ${cont.name}...`, 'info');
-    startTimedAction(`Обыск: ${cont.name}`, 3, () => {
+    const _searchTime = Math.round(3 * (typeof getDebuffMult === 'function' ? getDebuffMult('searchSpeed') : 1));
+    startTimedAction(`Обыск: ${cont.name}`, _searchTime, () => {
       cont.searched = true;
       room.searched = true;
       addSkillXp('scouting', 3);
@@ -3894,6 +3933,14 @@ function showCombatUI() {
         atkBtn.style.opacity = ready ? '1' : '0.4';
         atkBtn.style.pointerEvents = ready ? 'auto' : 'none';
       }
+      // Zombie auto-attack on timer (realtime combat)
+      const zAtkInterval = Math.max(2000, 5000 - (G.combatState.zombie.speed || 1) * 800);
+      if (!G.combatState._lastZombieAtk) G.combatState._lastZombieAtk = Date.now();
+      if (Date.now() - G.combatState._lastZombieAtk >= zAtkInterval) {
+        G.combatState._lastZombieAtk = Date.now();
+        zombieAttack();
+        if (G.combatState) showCombatUI();
+      }
     }, 200);
     G.combatState._uiTimer = _cbtTimerId;
   }
@@ -3982,7 +4029,8 @@ function combatAttack() {
   // Temperature debuffs to accuracy
   const bt2 = p.moodles.bodyTemp || 36.6;
   const tempAccPenalty = bt2 < 33 ? 15 : bt2 < 35 ? 8 : bt2 > 40 ? 10 : 0;
-  const finalHit = Math.min(95, Math.max(15, 60 + hitChance - panicMiss - tempAccPenalty));
+  const debuffAccPenalty = typeof getDebuffMult === 'function' ? getDebuffMult('accuracy') : 0;
+  const finalHit = Math.min(95, Math.max(15, 60 + hitChance - panicMiss - tempAccPenalty - debuffAccPenalty));
 
   if (rng.chance(finalHit)) {
     const skillMult = isFirearm ? (1 + (p.skills.firearms || 0) * 0.08) : (1 + p.skills.strength * 0.05);
@@ -4730,6 +4778,17 @@ function showInventory() {
       const _mlMax = def.capacity || 0;
       const _mlColor = _ml > 0 ? (_ml > _mlMax/3 ? 'var(--green)' : 'var(--yellow)') : 'var(--red)';
       html += `<div style="position:absolute;top:1px;right:1px;font-size:7px;color:${_mlColor};font-family:monospace;text-shadow:0 0 2px #000;pointer-events:none">${_ml}/${_mlMax}</div>`;
+    }
+    // Food freshness indicator
+    if (def?.type === 'food' && it.freshDays < 999) {
+      const fd = it.freshDays;
+      const freshCol = fd > 5 ? 'var(--green)' : fd > 2 ? 'var(--yellow)' : fd > 0 ? '#ff8800' : 'var(--red)';
+      const freshIcon = fd > 5 ? '' : fd > 0 ? '⚠' : '☠';
+      if (freshIcon) html += `<div style="position:absolute;top:0;left:1px;font-size:7px;color:${freshCol};pointer-events:none">${freshIcon}</div>`;
+    }
+    // Weight indicator (only for heavy items > 1kg)
+    if (def?.weight >= 1) {
+      html += `<div style="position:absolute;bottom:3px;left:1px;font-size:6px;color:var(--text-muted);pointer-events:none">${def.weight}кг</div>`;
     }
     html += '</div>';
   }
@@ -5652,10 +5711,16 @@ function useFood(idx) {
   const item = G.player.inventory[idx];
   const def = ITEMS[item.id];
   if (item.freshDays <= 0 && rng.chance(60)) {
-    addLog('Гнилая еда! Пищевое отравление!', 'danger');
-    G.player.moodles.hunger = Math.min(100, G.player.moodles.hunger + 15);
-    G.player.hp.torso = Math.max(0, G.player.hp.torso - 10);
-    G.player.moodles.pain += 15;
+    addLog('☠ Гнилая еда! Тяжёлое отравление!', 'danger');
+    G.player.moodles.hunger = Math.min(100, G.player.moodles.hunger + 20);
+    G.player.hp.torso = Math.max(0, G.player.hp.torso - 15);
+    G.player.moodles.pain = Math.min(100, G.player.moodles.pain + 25);
+    G.player.moodles.illness = Math.min(100, (G.player.moodles.illness || 0) + 20);
+    playSound('damage');
+  } else if (item.freshDays <= 2 && item.freshDays > 0 && rng.chance(25)) {
+    addLog('⚠ Чёрствая еда... Лёгкое недомогание.', 'warning');
+    G.player.moodles.pain = Math.min(100, G.player.moodles.pain + 5);
+    G.player.moodles.depression = Math.min(100, (G.player.moodles.depression || 0) + 3);
   } else {
     if (def.hunger) G.player.moodles.hunger = Math.max(0, G.player.moodles.hunger + def.hunger);
     if (def.thirst) G.player.moodles.thirst = Math.max(0, G.player.moodles.thirst + def.thirst);
@@ -6486,7 +6551,9 @@ function updateMapInfo(node) {
     }
   }
   if (nt.danger) {
-    info += `Опасность: ${Math.round(nt.danger * 100)}% · `;
+    const dPct = Math.round(nt.danger * 100);
+    const dCol = dPct > 15 ? 'var(--red)' : dPct > 8 ? 'var(--yellow)' : 'var(--green)';
+    info += `<span style="color:${dCol}">⚠ ${dPct}%</span> · `;
   }
 
   if (mapState.previewPath) {
