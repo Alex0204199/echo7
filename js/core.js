@@ -327,7 +327,11 @@ function itemIconStyle(id) {
 }
 function itemIconHtml(id, size) {
   const pos = ICON_MAP[id];
-  if (!pos) return '';
+  if (!pos) {
+    const _fallback = { key_holder:'🔑', radio:'📻', battery:'🔋', note:'📜', _key:'🗝' };
+    if (_fallback[id]) return `<div style="width:${size||32}px;height:${size||32}px;display:flex;align-items:center;justify-content:center;font-size:${Math.round((size||32)*0.6)}px">${_fallback[id]}</div>`;
+    return '';
+  }
   const sz = size || 32;
   const [c,r] = pos;
   const x = ICON_X[c], y = ICON_Y[r];

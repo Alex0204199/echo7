@@ -4668,15 +4668,17 @@ function showInventory() {
       html += `<div class="inv-cell" style="left:${c*CELL_PX}px;top:${r*CELL_PX}px;${bg}" data-gx="${c}" data-gy="${r}" ondragover="invDragOver(event)" ondrop="invGridDrop(event,${c},${r})"></div>`;
     }
   }
-  for (let r=0;r<rows;r++) for (let c=0;c<GRID_COLS;c++) {
-    html += `<div class="inv-cell" style="left:${c*CELL_PX}px;top:${r*CELL_PX}px" data-gx="${c}" data-gy="${r}" ondragover="invDragOver(event)" ondrop="invGridDrop(event,${c},${r})"></div>`;
-  }
   const rendered = new Set();
+  let _w1Hidden = false, _w2Hidden = false;
   for (let r=0;r<rows;r++) for (let c=0;c<GRID_COLS;c++) {
     const idx = _invGrid[r][c];
     if (idx < 0 || rendered.has(idx)) continue;
     rendered.add(idx);
     const it = p.inventory[idx];
+    if (!it) continue;
+    // Hide first matching weapon for each slot (shown on silhouette instead)
+    if (p.weaponSlot1 && it.id === p.weaponSlot1 && !_w1Hidden) { _w1Hidden = true; continue; }
+    if (p.weaponSlot2 && it.id === p.weaponSlot2 && p.weaponSlot2 !== p.weaponSlot1 && !_w2Hidden) { _w2Hidden = true; continue; }
     const [gw,gh] = gridSize(it.id);
     const def = ITEMS[it.id];
     const pw = gw*CELL_PX, ph = gh*CELL_PX;
