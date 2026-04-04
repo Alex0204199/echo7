@@ -1285,23 +1285,31 @@ function executeRouteStep() {
   route._moveTimer = setTimeout(() => {
     mapState.moveAnim = null;
 
-    // Advance game time
-    advanceTime(traverseMin, true);
-    const legPenalty = (G.player.hp.legL < 50 ? 1 : 0) + (G.player.hp.legR < 50 ? 1 : 0);
-    if (legPenalty > 0) advanceTime(legPenalty, true);
+    // Advance game time (apply debuff speed penalty)
+    const _moveSpeedMult = typeof getDebuffMult === 'function' ? getDebuffMult('moveSpeed') : 1;
+    const _adjustedTime = Math.round(traverseMin / Math.max(0.3, _moveSpeedMult));
+    advanceTime(_adjustedTime, true);
     // Stealth slows travel but is quieter
-    const stealthTimeAdd = G.player.stealthMode ? Math.ceil(traverseMin * 0.3) : 0;
+    const stealthTimeAdd = G.player.stealthMode ? Math.ceil(_adjustedTime * 0.3) : 0;
     if (stealthTimeAdd > 0) advanceTime(stealthTimeAdd, true);
 
     // Noise
     const noiseMult = G.player.stealthMode ? 0.4 : 1.0;
     addNoise(Math.ceil(traverseMin * 0.5 * noiseMult * (G.modifiers.movementNoiseMult || 1)));
 
-    // Encounter check
+    // Encounter check (reduced near home base)
     const dangerBase = nt.danger || 0.08;
     const nightBonus = getNightMod() * 0.01;
     const noiseBonus = G.player.moodles.noise * 0.001;
-    const encounterChance = (dangerBase + nightBonus + noiseBonus) * 100;
+    let _baseReduction = 0;
+    if (G.world.homeBase) {
+      const _homeNode = Object.values(G.world.nodes).find(n => n.building?.id === G.world.homeBase);
+      if (_homeNode) {
+        const _dist = Math.abs(nextNode.gx - _homeNode.gx) + Math.abs(nextNode.gy - _homeNode.gy);
+        if (_dist <= 3) _baseReduction = (G.world.homeBaseSecurity || 0) * 0.02; // up to 20% reduction at max security
+      }
+    }
+    const encounterChance = Math.max(0, (dangerBase + nightBonus + noiseBonus - _baseReduction)) * 100;
 
     if (rng.chance(encounterChance)) {
       moveToNode(nextNodeId);
@@ -6038,6 +6046,15 @@ function showCrafting() {
 
 function doCraft(idx) {
   const recipe = RECIPES[idx];
+  // Re-validate components before consuming
+  const canCraft = Object.entries(recipe.components).every(([id, qty]) => {
+    if (recipe.returnKnife && id === 'knife') return hasItem(id, 1);
+    if (recipe.keepHammer && id === 'hammer') return hasItem(id, 1);
+    if (recipe.keepAll) return hasItem(id, qty);
+    return hasItem(id, qty);
+  });
+  if (!canCraft) { addLog('Недостаточно компонентов!', 'warning'); return; }
+  if (recipe.skill && (G.player.skills[recipe.skill] || 0) < (recipe.skillReq || 0)) { addLog('Недостаточный уровень навыка!', 'warning'); return; }
 
   Object.entries(recipe.components).forEach(([id, qty]) => {
     if (recipe.returnKnife && id === 'knife') return;

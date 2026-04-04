@@ -156,8 +156,10 @@ function _animLoopInner() {
   sceneData.camX += (camTargetX - sceneData.camX) * camLerp;
   sceneData.camY += (camTargetY - sceneData.camY) * camLerp;
 
-  // ── Background — solid dark fill ──
-  ctx.fillStyle = '#040804';
+  // ── Background — darker at night ──
+  const _period = typeof getTimePeriod === 'function' ? getTimePeriod() : 'day';
+  const _nightDark = _period === 'night' ? '#020402' : _period === 'dusk' ? '#030603' : '#040804';
+  ctx.fillStyle = _nightDark;
   ctx.fillRect(0, 0, w, h);
 
   // Apply zoom
@@ -952,12 +954,20 @@ function _animLoopInner() {
   ctx.lineWidth = 0.6;
   ctx.beginPath(); ctx.arc(screenPX, screenPY, 16, 0, Math.PI*2); ctx.stroke();
 
-  // Core body (5px bright green)
-  ctx.globalAlpha = 0.95;
-  ctx.fillStyle = '#00FF41';
-  ctx.shadowColor = '#00FF41'; ctx.shadowBlur = 8;
+  // Core body (5px bright green) — dimmed in stealth
+  const _isStealth = G?.player?.stealthMode;
+  ctx.globalAlpha = _isStealth ? 0.45 : 0.95;
+  ctx.fillStyle = _isStealth ? '#00E5FF' : '#00FF41';
+  ctx.shadowColor = _isStealth ? '#00E5FF' : '#00FF41'; ctx.shadowBlur = _isStealth ? 4 : 8;
   ctx.beginPath(); ctx.arc(screenPX, screenPY, 5, 0, Math.PI*2); ctx.fill();
   ctx.shadowBlur = 0;
+  // Stealth indicator — dashed ring
+  if (_isStealth) {
+    ctx.globalAlpha = 0.2 + Math.sin(sceneData.playerGlow * 1.5) * 0.1;
+    ctx.strokeStyle = '#00E5FF'; ctx.lineWidth = 0.8; ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.arc(screenPX, screenPY, 14, 0, Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+  }
 
   // Direction arrow
   const dirMap = [
@@ -1204,10 +1214,11 @@ function _animLoopInner() {
   // POST-PROCESSING (screen-space)
   // ══════════════════════════════════════
 
-  // Screen vignette — darker corners
-  const vigGrad = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.7);
+  // Screen vignette — darker corners (heavier at night)
+  const _nightVig = _period === 'night' ? 0.55 : _period === 'dusk' ? 0.4 : 0.3;
+  const vigGrad = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.max(w, h) * 0.65);
   vigGrad.addColorStop(0, 'transparent');
-  vigGrad.addColorStop(1, 'rgba(0,0,0,0.3)');
+  vigGrad.addColorStop(1, `rgba(0,0,0,${_nightVig})`);
   ctx.fillStyle = vigGrad;
   ctx.fillRect(0, 0, w, h);
 
