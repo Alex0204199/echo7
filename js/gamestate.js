@@ -2180,13 +2180,29 @@ function addItem(id, qty = 1, extra = {}) {
   return true;
 }
 
+function getEquippedWeaponItem() {
+  const p = G.player;
+  const slot = p.activeSlot || 1;
+  // First check _weaponData (weapon removed from inventory)
+  const wd = p[`_weaponData${slot}`];
+  if (wd && wd.id === (p[`weaponSlot${slot}`])) return wd;
+  // Fallback: inventory
+  return p.inventory.find(i => i.id === p.equipped) || null;
+}
+
 function getEquippedWeapon() {
   const wId = getActiveWeaponId();
   if (wId === 'fist' || !ITEMS[wId]) return { ...ITEMS.fist, id: 'fist' };
+  // Check equipped weapon data (stored on slot)
+  const slot = G.player.activeSlot || 1;
+  const slotData = G.player[`_weaponData${slot}`];
+  if (slotData && slotData.id === wId) {
+    G.player.equipped = wId;
+    return { ...ITEMS[wId], id: wId, durability: slotData.durability, insertedMag: slotData.insertedMag, loadedAmmo: slotData.loadedAmmo };
+  }
+  // Fallback: check inventory
   const inv = G.player.inventory.find(i => i.id === wId);
   if (!inv) {
-    // Weapon not in inventory - clear slot
-    const slot = G.player.activeSlot || 1;
     G.player[`weaponSlot${slot}`] = null;
     G.player.equipped = 'fist';
     return { ...ITEMS.fist, id: 'fist' };
@@ -3769,7 +3785,7 @@ function showCombatUI() {
   if (!G.combatState) return;
   const z = G.combatState.zombie;
   const w = getEquippedWeapon();
-  const invItem = G.player.inventory.find(i => i.id === G.player.equipped);
+  const invItem = typeof getEquippedWeaponItem === 'function' ? getEquippedWeaponItem() : G.player.inventory.find(i => i.id === G.player.equipped);
   const hpPct = Math.round(z.currentHp / z.hp * 100);
   const hpColor = hpPct > 50 ? 'var(--green)' : hpPct > 25 ? 'var(--yellow)' : 'var(--red)';
   const isMP = typeof Net !== 'undefined' && Net.mode !== 'OFFLINE';
@@ -3932,7 +3948,7 @@ function combatAttack() {
   const z = G.combatState.zombie;
   const w = getEquippedWeapon();
   const p = G.player;
-  const invItem = p.inventory.find(i => i.id === p.equipped);
+  const invItem = typeof getEquippedWeaponItem === 'function' ? getEquippedWeaponItem() : p.inventory.find(i => i.id === p.equipped);
 
   // Firearm ammo check (new magazine system)
   const isFirearm = w.subtype === 'firearm';
@@ -4669,16 +4685,12 @@ function showInventory() {
     }
   }
   const rendered = new Set();
-  let _w1Hidden = false, _w2Hidden = false;
   for (let r=0;r<rows;r++) for (let c=0;c<GRID_COLS;c++) {
     const idx = _invGrid[r][c];
     if (idx < 0 || rendered.has(idx)) continue;
     rendered.add(idx);
     const it = p.inventory[idx];
     if (!it) continue;
-    // Hide first matching weapon for each slot (shown on silhouette instead)
-    if (p.weaponSlot1 && it.id === p.weaponSlot1 && !_w1Hidden) { _w1Hidden = true; continue; }
-    if (p.weaponSlot2 && it.id === p.weaponSlot2 && p.weaponSlot2 !== p.weaponSlot1 && !_w2Hidden) { _w2Hidden = true; continue; }
     const [gw,gh] = gridSize(it.id);
     const def = ITEMS[it.id];
     const pw = gw*CELL_PX, ph = gh*CELL_PX;
@@ -4894,8 +4906,8 @@ function invGridDrop(e, gx, gy) {
   // If dragged from a slot, unequip first
   if (_invDrag.fromSlot) {
     const slot = _invDrag.fromSlot;
-    if (slot === 'weapon1') { G.player.weaponSlot1 = null; if (G.player.activeSlot===1) G.player.equipped='fist'; }
-    else if (slot === 'weapon2') { G.player.weaponSlot2 = null; if (G.player.activeSlot===2) G.player.equipped='fist'; }
+    if (slot === 'weapon1') { G.player.weaponSlot1 = null; G.player._weaponData1 = null; if (G.player.activeSlot===1) G.player.equipped='fist'; }
+    else if (slot === 'weapon2') { G.player.weaponSlot2 = null; G.player._weaponData2 = null; if (G.player.activeSlot===2) G.player.equipped='fist'; }
     else if (G.player.equipment[slot]) { G.player.equipment[slot] = null; }
     // Add to inventory if not already there
     if (!G.player.inventory.includes(it)) {
@@ -4937,10 +4949,18 @@ function invSlotDrop(e, slotKey) {
     if (def.type !== 'weapon') return;
     const slotNum = slotKey === 'weapon1' ? 1 : 2;
     const oldId = slotNum===1 ? G.player.weaponSlot1 : G.player.weaponSlot2;
+    const oldData = G.player[`_weaponData${slotNum}`];
     if (slotNum===1) G.player.weaponSlot1 = it.id;
     else G.player.weaponSlot2 = it.id;
     if (G.player.activeSlot === slotNum) G.player.equipped = it.id;
-    // Weapon STAYS in inventory (getEquippedWeapon needs it there, insertedMag preserved)
+    // Store weapon data + remove from inventory
+    G.player[`_weaponData${slotNum}`] = { id: it.id, durability: it.durability, insertedMag: it.insertedMag, loadedAmmo: it.loadedAmmo };
+    clearFromGrid(idx);
+    G.player.inventory.splice(idx, 1);
+    // Return old weapon to inventory with its data
+    if (oldId && oldId !== 'fist') {
+      addItem(oldId, 1, { durability: oldData?.durability, insertedMag: oldData?.insertedMag, loadedAmmo: oldData?.loadedAmmo });
+    }
   } else {
     if (def.type !== 'clothing' || def.slot !== slotKey) return;
     // Unequip current if any
@@ -5342,11 +5362,23 @@ function invEquipWeapon(idx) {
   const def = ITEMS[it.id];
   if (!def || def.type !== 'weapon') return;
   const slot = G.player.activeSlot || 1;
+  // Save current weapon's full state (including insertedMag) before swapping
   const oldId = slot===1 ? G.player.weaponSlot1 : G.player.weaponSlot2;
-  // Set new weapon (weapon STAYS in inventory — getEquippedWeapon needs it there)
+  const oldInvItem = oldId ? G.player.inventory.find(i => i.id === oldId) : null;
+  const oldExtra = oldInvItem ? { durability: oldInvItem.durability, insertedMag: oldInvItem.insertedMag, loadedAmmo: oldInvItem.loadedAmmo } : {};
+  // Set new weapon + store full item data for getEquippedWeapon
   if (slot===1) G.player.weaponSlot1 = it.id;
   else G.player.weaponSlot2 = it.id;
   G.player.equipped = it.id;
+  G.player[`_weaponData${slot}`] = { id: it.id, durability: it.durability, insertedMag: it.insertedMag, loadedAmmo: it.loadedAmmo };
+  // Remove new weapon from inventory
+  clearFromGrid(idx);
+  G.player.inventory.splice(idx, 1);
+  // Put old weapon back WITH its magazine/ammo state
+  if (oldId && oldId !== 'fist') {
+    const oldData = G.player[`_weaponData${slot}`===`_weaponData1`?'_weaponData1':'_weaponData2'];
+    addItem(oldId, 1, oldExtra);
+  }
   calcWeight();
   addLog(`Экипировано в слот ${slot}: ${def.name}`, 'info');
   showInventory();
