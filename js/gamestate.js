@@ -5018,11 +5018,31 @@ function invSlotDrop(e, slotKey) {
 
 function invSlotClick(slotKey) {
   let itemId = null;
-  if (slotKey === 'weapon1') { itemId = G.player.weaponSlot1; if (itemId) { G.player.weaponSlot1=null; if (G.player.activeSlot===1) G.player.equipped='fist'; } }
-  else if (slotKey === 'weapon2') { itemId = G.player.weaponSlot2; if (itemId) { G.player.weaponSlot2=null; if (G.player.activeSlot===2) G.player.equipped='fist'; } }
-  else { itemId = G.player.equipment?.[slotKey]; if (itemId) G.player.equipment[slotKey]=null; }
+  let extra = {};
+  if (slotKey === 'weapon1') {
+    itemId = G.player.weaponSlot1;
+    if (itemId) {
+      const wd = G.player._weaponData1;
+      if (wd) extra = { durability: wd.durability, insertedMag: wd.insertedMag, loadedAmmo: wd.loadedAmmo };
+      G.player.weaponSlot1 = null;
+      G.player._weaponData1 = null;
+      if (G.player.activeSlot===1) G.player.equipped='fist';
+    }
+  } else if (slotKey === 'weapon2') {
+    itemId = G.player.weaponSlot2;
+    if (itemId) {
+      const wd = G.player._weaponData2;
+      if (wd) extra = { durability: wd.durability, insertedMag: wd.insertedMag, loadedAmmo: wd.loadedAmmo };
+      G.player.weaponSlot2 = null;
+      G.player._weaponData2 = null;
+      if (G.player.activeSlot===2) G.player.equipped='fist';
+    }
+  } else {
+    itemId = G.player.equipment?.[slotKey];
+    if (itemId) G.player.equipment[slotKey] = null;
+  }
   if (itemId) {
-    addItem(itemId, 1);
+    addItem(itemId, 1, extra);
     calcWeight();
     showInventory();
   }
