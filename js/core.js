@@ -686,6 +686,11 @@ const ROOM_FURNITURE = {
   'Оружейная':   [{name:'Оруж. комната',icon:'▊',shape:'tall'},{name:'Оруж. шкаф 1',icon:'▊',shape:'tall'},{name:'Ящик боеприпасов',icon:'□',shape:'box'}],
   'Камеры':      [{name:'Кровать',icon:'▬',shape:'wide'}],
   'Раздевалка полиции':[{name:'Шкафчик полицейского',icon:'▊',shape:'tall'},{name:'Шкафчик полицейского',icon:'▊',shape:'tall'},{name:'Полка',icon:'▬',shape:'line'}],
+  // Медицинские учреждения
+  'Регистратура':   [{name:'Стойка ресепшн',icon:'▬',shape:'wide'},{name:'Шкаф картотеки',icon:'▊',shape:'tall'}],
+  'Процедурная':    [{name:'Мед. шкаф',icon:'▊',shape:'tall'},{name:'Мед. столик',icon:'□',shape:'box'},{name:'Тумба с препаратами',icon:'□',shape:'box'}],
+  'Кабинет врача':  [{name:'Стол врача',icon:'▬',shape:'wide'},{name:'Мед. шкаф',icon:'▊',shape:'tall'},{name:'Аптечка',icon:'□',shape:'box'}],
+  'Аптечный склад': [{name:'Стеллаж медикаментов',icon:'▬',shape:'line'},{name:'Стеллаж медикаментов',icon:'▬',shape:'line'},{name:'Ящик перевязочных',icon:'□',shape:'box'}],
 };
 
 // Loot pools per furniture name (logical loot)
@@ -745,6 +750,14 @@ const FURNITURE_LOOT = {
   'Шкафчик полицейского':{ pool:['jacket_police','pants_police','helmet_riot','vest_police','bandage'], count:[1,2] },
   'Сейф':          { pool:['pm','glock17','revolver_357','ammo_9x19','ammo_357','mag_glock'], count:[1,2] },
   'Стол дежурного':{ pool:['magazine','water','cigarettes','bandage','ammo_9x19'], count:[0,2] },
+  // Медицинские
+  'Мед. шкаф':     { pool:['bandage','antibiotics','disinfectant','painkillers','splint','vitamins','antidepressants'], count:[2,4] },
+  'Мед. столик':   { pool:['bandage','disinfectant','splint','painkillers'], count:[1,3] },
+  'Тумба с препаратами':{ pool:['antibiotics','painkillers','antidepressants','vitamins','disinfectant'], count:[1,3] },
+  'Шкаф картотеки':{ pool:['magazine','book_firstaid'], count:[0,1] },
+  'Стол врача':    { pool:['bandage','painkillers','disinfectant','antibiotics'], count:[1,2] },
+  'Стеллаж медикаментов':{ pool:['bandage','antibiotics','disinfectant','painkillers','splint','vitamins','scrubs','hat_medic','bag_medic'], count:[2,5] },
+  'Ящик перевязочных':{ pool:['bandage','bandage','splint','cloth','disinfectant'], count:[2,4] },
 };
 
 // ── LOCATION TEMPLATES ──

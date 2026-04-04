@@ -1810,6 +1810,21 @@ function advanceTime(hours = 1, isMinutes = false) {
   if (G.player.hp.head <= 0 || G.player.hp.torso <= 0) {
     playerDeath('Критические ранения');
   }
+
+  // ── Debuffs based on player state ──
+  const p = G.player;
+  const debuffs = [];
+  if (isEncumbered()) debuffs.push({ name:'Перегруз', icon:'⚖', effect:'noise+50%, speed-30%' });
+  if (p.moodles.depression > 60) debuffs.push({ name:'Депрессия', icon:'😞', effect:'обыск +50% времени' });
+  if (p.moodles.fatigue > 80) debuffs.push({ name:'Истощение', icon:'😴', effect:'урон -20%, точность -15' });
+  if (p.moodles.hunger > 80) debuffs.push({ name:'Голод', icon:'🍽', effect:'HP -1/мин, скорость -20%' });
+  if (p.moodles.thirst > 80) debuffs.push({ name:'Жажда', icon:'💧', effect:'HP -2/мин, обморок' });
+  if (p.moodles.pain > 60) debuffs.push({ name:'Боль', icon:'💢', effect:'точность -20, скорость -15%' });
+  if (p.moodles.infection > 40) debuffs.push({ name:'Инфекция', icon:'🦠', effect:'HP -1/мин, жар' });
+  if (p.moodles.bodyTemp < 34) debuffs.push({ name:'Гипотермия', icon:'🥶', effect:'скорость -40%, тремор' });
+  if (p.moodles.bodyTemp > 39) debuffs.push({ name:'Жар', icon:'🤒', effect:'жажда +100%, усталость +50%' });
+  G._activeDebuffs = debuffs;
+
   updateUI();
 }
 
@@ -2132,18 +2147,37 @@ function removeItem(id, qty = 1) {
   calcWeight();
 }
 
+function maxInventorySlots() {
+  let slots = 20; // base slots
+  const eq = G.player.equipment;
+  if (eq?.back) {
+    const bDef = ITEMS[eq.back];
+    if (bDef?.id === 'backpack') slots += 10;
+    else if (bDef?.id === 'bag' || bDef?.id === 'bag_mil' || bDef?.id === 'bag_medic' || bDef?.id === 'bag_fire') slots += 8;
+    else if (bDef) slots += 5;
+  }
+  if (eq?.rig) slots += 4; // vest/rig adds 4 slots
+  return slots;
+}
+
 function addItem(id, qty = 1, extra = {}) {
   const def = ITEMS[id];
-  if (!def) return;
+  if (!def) return false;
   const canStack = (def.type === 'ammo' || def.type === 'material' || def.type === 'food' || def.type === 'medicine' || def.type === 'comfort' || def.type === 'throwable') && !extra.keyId;
   const existing = canStack ? G.player.inventory.find(i => i.id === id && !i.keyId) : null;
   if (existing) {
     existing.qty += qty;
   } else {
+    // Check inventory capacity
+    if (G.player.inventory.length >= maxInventorySlots()) {
+      addLog(`⚠ Инвентарь полон! (${G.player.inventory.length}/${maxInventorySlots()})`, 'warning');
+      return false;
+    }
     G.player.inventory.push({ id, qty, durability: def.dur || 0, freshDays: def.freshness || 999, ...extra });
   }
   if(G?._dayStats) G._dayStats.itemsFound++;
   calcWeight();
+  return true;
 }
 
 function getEquippedWeapon() {
