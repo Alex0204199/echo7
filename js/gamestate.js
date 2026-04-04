@@ -4574,8 +4574,20 @@ function showInventory() {
     const hasIt = !!itemId;
     const title = hasIt ? (ITEMS[itemId]?.name || itemId) : label;
     const iconSz = Math.min(w, h) - 6;
-    let s = `<div class="inv-eslot${hasIt?' has-item':''}" title="${title}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px" data-slot="${key}" ondragover="invDragOver(event)" ondrop="invSlotDrop(event,'${key}')" onclick="invSlotClick('${key}')">`;
+    let s = `<div class="inv-eslot${hasIt?' has-item':''}" data-eq-slot="${key}" title="${title}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px" data-slot="${key}" ondragover="invDragOver(event)" ondrop="invSlotDrop(event,'${key}')" onclick="invSlotClick('${key}')">`;
     if (hasIt) s += `<div style="pointer-events:none">${itemIconHtml(itemId, iconSz)}</div>`;
+    // Ammo count badge for weapon slots
+    if (hasIt && (key === 'weapon1' || key === 'weapon2')) {
+      const slotNum = key === 'weapon1' ? 1 : 2;
+      const wd = p[`_weaponData${slotNum}`];
+      if (wd) {
+        const ammo = wd.insertedMag ? (wd.insertedMag.loadedAmmo||0) : (wd.loadedAmmo||0);
+        const hasMag = !!wd.insertedMag;
+        const ammoCol = ammo > 0 ? 'var(--green)' : 'var(--red)';
+        s += `<div style="position:absolute;top:1px;right:1px;font-size:8px;color:${ammoCol};font-family:monospace;text-shadow:0 0 3px #000">${ammo}</div>`;
+        if (hasMag) s += `<div style="position:absolute;bottom:1px;right:1px;font-size:6px;color:var(--cyan)">▮</div>`;
+      }
+    }
     s += `<span class="slot-label">${label}</span></div>`;
     return s;
   }
@@ -4704,6 +4716,20 @@ function showInventory() {
     if (def?.dur && it.durability != null && it.durability < 100) {
       const dp = it.durability;
       html += `<div style="position:absolute;bottom:0;left:0;right:0;height:2px;background:rgba(0,0,0,.4)"><div style="width:${dp}%;height:100%;background:${dp>50?'#00FF41':dp>25?'#ffaa00':'#ff4444'}"></div></div>`;
+    }
+    // Ammo indicator for firearms and magazines
+    if (def?.subtype === 'firearm') {
+      const _ai = it.insertedMag ? (it.insertedMag.loadedAmmo || 0) : (it.loadedAmmo || 0);
+      const _aiMax = it.insertedMag ? (ITEMS[it.insertedMag.id]?.capacity || def.magSize || 0) : (def.magSize || 0);
+      const _aiColor = _ai > 0 ? (_ai > _aiMax/3 ? 'var(--green)' : 'var(--yellow)') : 'var(--red)';
+      html += `<div style="position:absolute;top:1px;right:1px;font-size:7px;color:${_aiColor};font-family:monospace;text-shadow:0 0 2px #000;pointer-events:none">${_ai}</div>`;
+      if (it.insertedMag) html += `<div style="position:absolute;bottom:3px;right:1px;font-size:6px;color:var(--cyan);pointer-events:none">▮</div>`;
+    }
+    if (def?.type === 'magazine') {
+      const _ml = it.loadedAmmo || 0;
+      const _mlMax = def.capacity || 0;
+      const _mlColor = _ml > 0 ? (_ml > _mlMax/3 ? 'var(--green)' : 'var(--yellow)') : 'var(--red)';
+      html += `<div style="position:absolute;top:1px;right:1px;font-size:7px;color:${_mlColor};font-family:monospace;text-shadow:0 0 2px #000;pointer-events:none">${_ml}/${_mlMax}</div>`;
     }
     html += '</div>';
   }
@@ -4906,19 +4932,29 @@ function invGridDrop(e, gx, gy) {
   if (!it) return;
   const [gw,gh] = gridSize(it.id);
 
-  // If dragged from a slot, unequip first
+  // If dragged from a slot, unequip and return to inventory with full data
   if (_invDrag.fromSlot) {
     const slot = _invDrag.fromSlot;
-    if (slot === 'weapon1') { G.player.weaponSlot1 = null; G.player._weaponData1 = null; if (G.player.activeSlot===1) G.player.equipped='fist'; }
-    else if (slot === 'weapon2') { G.player.weaponSlot2 = null; G.player._weaponData2 = null; if (G.player.activeSlot===2) G.player.equipped='fist'; }
-    else if (G.player.equipment[slot]) { G.player.equipment[slot] = null; }
-    // Add to inventory if not already there
+    if (slot === 'weapon1' || slot === 'weapon2') {
+      const slotNum = slot === 'weapon1' ? 1 : 2;
+      const wData = G.player[`_weaponData${slotNum}`];
+      const wId = G.player[`weaponSlot${slotNum}`];
+      G.player[`weaponSlot${slotNum}`] = null;
+      G.player[`_weaponData${slotNum}`] = null;
+      if (G.player.activeSlot === slotNum) G.player.equipped = 'fist';
+      // Create inventory item from _weaponData (weapon was not in inventory)
+      if (wId && wData) {
+        addItem(wId, 1, { durability: wData.durability, insertedMag: wData.insertedMag, loadedAmmo: wData.loadedAmmo });
+      } else if (wId) {
+        addItem(wId, 1);
+      }
+      showInventory();
+      return;
+    }
+    if (G.player.equipment[slot]) { G.player.equipment[slot] = null; }
     if (!G.player.inventory.includes(it)) {
       G.player.inventory.push(it);
       initInvGrid();
-      const newIdx = G.player.inventory.length - 1;
-      const spot = findFreeSpot(gw,gh);
-      if (spot) { G.player.inventory[newIdx].gridX = spot[0]; G.player.inventory[newIdx].gridY = spot[1]; }
       showInventory();
       return;
     }
