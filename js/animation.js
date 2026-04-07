@@ -892,22 +892,30 @@ function _animLoopInner() {
     else if (period === 'dusk' || period === 'dawn') visRadius = 140 + torchBonus * 0.5;
     else visRadius = 180;
 
-    // Darkening gradient from player
+    // Darkening gradient from player (cached — rebuild only when position shifts >5px)
     const darkStrength = period === 'night' ? 0.65 : period === 'dusk' || period === 'dawn' ? 0.45 : 0.25;
-    const vGrad = ctx.createRadialGradient(screenPX, screenPY, visRadius * 0.4, screenPX, screenPY, visRadius * 1.8);
-    vGrad.addColorStop(0, 'transparent');
-    vGrad.addColorStop(0.6, `rgba(4,8,4,${darkStrength * 0.3})`);
-    vGrad.addColorStop(1, `rgba(4,8,4,${darkStrength})`);
-    ctx.fillStyle = vGrad;
+    const _fogKey = `${Math.round(screenPX/5)}_${Math.round(screenPY/5)}_${period}_${visRadius}`;
+    if (!sceneData._fogCache || sceneData._fogCacheKey !== _fogKey) {
+      const vGrad = ctx.createRadialGradient(screenPX, screenPY, visRadius * 0.4, screenPX, screenPY, visRadius * 1.8);
+      vGrad.addColorStop(0, 'transparent');
+      vGrad.addColorStop(0.6, `rgba(4,8,4,${darkStrength * 0.3})`);
+      vGrad.addColorStop(1, `rgba(4,8,4,${darkStrength})`);
+      sceneData._fogCache = vGrad;
+      sceneData._fogCacheKey = _fogKey;
+      if (hasTorch && (period === 'night' || period === 'dusk')) {
+        const tGrad = ctx.createRadialGradient(screenPX, screenPY, 0, screenPX, screenPY, visRadius * 0.8);
+        tGrad.addColorStop(0, 'rgba(255,160,40,0.04)');
+        tGrad.addColorStop(0.5, 'rgba(255,100,20,0.015)');
+        tGrad.addColorStop(1, 'transparent');
+        sceneData._torchCache = tGrad;
+      } else {
+        sceneData._torchCache = null;
+      }
+    }
+    ctx.fillStyle = sceneData._fogCache;
     ctx.fillRect(-50, -50, w + 100, h + 100);
-
-    // Torch warm glow at night
-    if (hasTorch && (period === 'night' || period === 'dusk')) {
-      const tGrad = ctx.createRadialGradient(screenPX, screenPY, 0, screenPX, screenPY, visRadius * 0.8);
-      tGrad.addColorStop(0, 'rgba(255,160,40,0.04)');
-      tGrad.addColorStop(0.5, 'rgba(255,100,20,0.015)');
-      tGrad.addColorStop(1, 'transparent');
-      ctx.fillStyle = tGrad;
+    if (sceneData._torchCache) {
+      ctx.fillStyle = sceneData._torchCache;
       ctx.fillRect(-50, -50, w + 100, h + 100);
     }
   }
@@ -1090,14 +1098,15 @@ function _animLoopInner() {
   // ══════════════════════════════════════
   // AMBIENT PARTICLES (floating green dots)
   // ══════════════════════════════════════
-  const maxParticles = window.innerWidth < 600 ? 15 : 40;
-  while (sceneData.ambientParticles.length < maxParticles) {
+  const maxParticles = window.innerWidth < 600 ? 15 : 30;
+  // Batch-spawn missing particles (max 3 per frame to reduce GC spikes)
+  const _toSpawn = Math.min(3, maxParticles - sceneData.ambientParticles.length);
+  for (let s = 0; s < _toSpawn; s++) {
     sceneData.ambientParticles.push({
       x: sceneData.camX + (Math.random() - 0.5) * w * 1.5,
       y: sceneData.camY + (Math.random() - 0.5) * h * 1.5,
       vx: (Math.random() - 0.5) * 0.15,
       vy: -0.1 - Math.random() * 0.2,
-      alpha: 0.2 + Math.random() * 0.3,
       size: 0.8 + Math.random() * 1.2,
       life: 1,
       decay: 0.002 + Math.random() * 0.003,
@@ -1105,12 +1114,14 @@ function _animLoopInner() {
     });
   }
 
-  for (let i = sceneData.ambientParticles.length - 1; i >= 0; i--) {
+  // Update + render (swap-remove dead particles to avoid splice overhead)
+  let _apLen = sceneData.ambientParticles.length;
+  for (let i = _apLen - 1; i >= 0; i--) {
     const ap = sceneData.ambientParticles[i];
     ap.x += ap.vx;
     ap.y += ap.vy;
     ap.life -= ap.decay;
-    if (ap.life <= 0) { sceneData.ambientParticles.splice(i, 1); continue; }
+    if (ap.life <= 0) { sceneData.ambientParticles[i] = sceneData.ambientParticles[--_apLen]; continue; }
     const asx = ap.x - sceneData.camX + w / 2;
     const asy = ap.y - sceneData.camY + h / 2;
     if (asx < -10 || asx > w + 10 || asy < -10 || asy > h + 10) continue;
@@ -1118,13 +1129,14 @@ function _animLoopInner() {
     ctx.fillStyle = ap.color;
     ctx.fillRect(asx, asy, ap.size, ap.size);
   }
+  sceneData.ambientParticles.length = _apLen; // trim dead entries
   ctx.globalAlpha = 1;
 
   // ══════════════════════════════════════
   // TRANSIENT PARTICLES (scan scatter etc)
   // ══════════════════════════════════════
   // Cap particles
-  const maxTransient = window.innerWidth < 600 ? 200 : 500;
+  const maxTransient = window.innerWidth < 600 ? 100 : 300;
   while (sceneData.particles.length > maxTransient) sceneData.particles.shift();
 
   for (let i = sceneData.particles.length - 1; i >= 0; i--) {

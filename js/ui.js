@@ -1,8 +1,13 @@
 // ═══════════════════════════════════════════
 // UI UPDATE
 // ═══════════════════════════════════════════
+let _uiThrottleTimer = 0;
 function updateUI() {
   if (!G) return;
+  // Throttle: max 4 updates/sec (250ms)
+  const now = Date.now();
+  if (now - _uiThrottleTimer < 200) return;
+  _uiThrottleTimer = now;
 
   // Time
   document.getElementById('game-time').textContent = getTimeString();
@@ -46,18 +51,37 @@ function updateUI() {
   }
 
   // Weight
-  document.getElementById('weight-display').textContent = `${G.player.weight}/${maxWeight()} ${t('hud.weight')}`;
-  document.getElementById('weight-display').style.color = isEncumbered() ? 'var(--red)' : 'var(--text-dim)';
+  const _wEl = document.getElementById('weight-display');
+  const _encLvlW = typeof encumbranceLevel === 'function' ? encumbranceLevel() : 0;
+  const _wColor = isEncumbered() ? 'var(--red)' : _encLvlW > 0.5 ? '#ff8800' : _encLvlW > 0 ? 'var(--yellow)' : 'var(--text-dim)';
+  _wEl.textContent = `${G.player.weight}/${maxWeight()} ${t('hud.weight')}`;
+  _wEl.style.color = _wColor;
 
-  // HP bar
+  // Mini-stats: days + kills
+  let miniStats = document.getElementById('mini-stats');
+  if (!miniStats) {
+    miniStats = document.createElement('div');
+    miniStats.id = 'mini-stats';
+    miniStats.style.cssText = 'font-size:9px;color:var(--text-muted);letter-spacing:.05em';
+    _wEl.parentElement.appendChild(miniStats);
+  }
+  // Cache explored count (recount every 5 seconds)
+  if (!G._exploredCache || now - (G._exploredCacheTime||0) > 5000) {
+    G._exploredCache = G.world?.nodes ? Object.values(G.world.nodes).filter(n => n.visited).length : 0;
+    G._exploredCacheTime = now;
+  }
+  miniStats.textContent = `День ${G.player.daysSurvived} · ☠${G.stats.zombiesKilled || 0} · 📍${G._exploredCache}`;
+
+  // HP bar (only rebuild if segment count changed)
   const hpBar = document.getElementById('hp-bar');
   const avgHp = getTotalHp();
-  hpBar.innerHTML = '';
   if (!G._prevHpSegs) G._prevHpSegs = 10;
   const newSegs = Math.ceil(avgHp / 10);
   const hpChanged = newSegs !== G._prevHpSegs;
   const _oldHpSegs = G._prevHpSegs;
   G._prevHpSegs = newSegs;
+  if (hpChanged || !hpBar.children.length) {
+  hpBar.innerHTML = '';
   for (let i = 0; i < 10; i++) {
     const seg = document.createElement('div');
     seg.className = 'hp-seg';
@@ -70,6 +94,7 @@ function updateUI() {
       seg.style.animation = 'hpFlash .3s';
     }
   }
+  } // end HP rebuild conditional
 
   // Noise indicator (left side)
   const noiseVal = Math.round(G.player.moodles.noise);
@@ -100,6 +125,31 @@ function updateUI() {
     healthStatusEl.style.borderColor = hColor;
   }
 
+  // Weapon HUD
+  const weaponHud = document.getElementById('weapon-hud');
+  if (weaponHud) {
+    const wId = G.player.equipped || 'fist';
+    const wDef = ITEMS[wId];
+    if (wDef && wId !== 'fist') {
+      const wItem = typeof getEquippedWeaponItem === 'function' ? getEquippedWeaponItem() : null;
+      let wText = `⚔ ${wDef.name}`;
+      if (wDef.subtype === 'firearm' && wItem) {
+        const ammo = wItem.insertedMag ? (wItem.insertedMag.loadedAmmo || 0) : (wItem.loadedAmmo || 0);
+        const ammoColor = ammo > 0 ? 'var(--green)' : 'var(--red)';
+        wText += ` <span style="color:${ammoColor}">[${ammo}]</span>`;
+      }
+      if (wItem && wDef.dur) {
+        const durPct = Math.round(wItem.durability / wDef.dur * 100);
+        const durColor = durPct > 50 ? 'var(--green)' : durPct > 25 ? '#ffaa00' : 'var(--red)';
+        wText += ` <span style="color:${durColor}">${durPct}%</span>`;
+      }
+      weaponHud.innerHTML = wText;
+      weaponHud.style.display = '';
+    } else {
+      weaponHud.style.display = 'none';
+    }
+  }
+
   // Moodles
   const moodlesEl = document.getElementById('moodles');
   moodlesEl.innerHTML = '';
@@ -124,8 +174,10 @@ function updateUI() {
   });
   if (G.player.moodles.bleeding > 0) {
     const div = document.createElement('div');
-    div.className = 'moodle critical';
-    div.innerHTML = `${uiIconHtml('moodle_pain',14)} ${t('mood.bleeding')}`;
+    const _bl = G.player.moodles.bleeding;
+    div.className = _bl >= 3 ? 'moodle critical' : _bl >= 2 ? 'moodle severe' : 'moodle warning';
+    const _blName = _bl >= 3 ? 'Сильное кровотечение!' : _bl >= 2 ? t('mood.bleeding') : 'Лёгкое кровотечение';
+    div.innerHTML = `${uiIconHtml('moodle_pain',14)} ${_blName}`;
     moodlesEl.appendChild(div);
   }
 
@@ -173,10 +225,16 @@ function updateUI() {
     div.textContent = '👁 Скрытность';
     moodlesEl.appendChild(div);
   }
+  const _encLvl = typeof encumbranceLevel === 'function' ? encumbranceLevel() : 0;
   if (isEncumbered()) {
     const div = document.createElement('div');
-    div.className = 'moodle severe';
-    div.textContent = '⚖ Перегруз';
+    div.className = 'moodle critical';
+    div.textContent = '⚖ Перегруз!';
+    moodlesEl.appendChild(div);
+  } else if (_encLvl > 0) {
+    const div = document.createElement('div');
+    div.className = _encLvl > 0.6 ? 'moodle severe' : 'moodle warning';
+    div.textContent = `⚖ Тяжело (−${Math.round(_encLvl * 40)}%)`;
     moodlesEl.appendChild(div);
   }
 
@@ -259,9 +317,36 @@ function updateUI() {
     { id:'radio', uiIcon:'hud_radio', label: LANG.current==='en'?'RADIO':'РАЦИЯ', show: hasItem('radio') },
     { id:'map', uiIcon:'hud_map', label: t('act.map'), show: true },
     { id:'save', uiIcon:'hud_save', label: t('act.save'), show: true },
+    { id:'settings', uiIcon:'hud_save', label: '⚙', show: true },
   ];
 
   actionsEl.innerHTML = '';
+
+  // Emergency quick-use buttons (contextual)
+  const _quickBtns = [];
+  if (G.player.moodles.bleeding > 0 && hasItem('bandage')) {
+    _quickBtns.push({ label:'🩹 Бинт', color:'var(--red)', action: () => { const idx = G.player.inventory.findIndex(i=>i.id==='bandage'); if (idx >= 0) useMedicine(idx); } });
+  }
+  if (G.player.moodles.hunger >= 70) {
+    const foodIdx = G.player.inventory.findIndex(i => ITEMS[i.id]?.type === 'food' && ITEMS[i.id]?.hunger < 0 && i.freshDays > 0);
+    if (foodIdx >= 0) _quickBtns.push({ label:`🍖 ${ITEMS[G.player.inventory[foodIdx].id].name}`, color:'var(--yellow)', action: () => useFood(foodIdx) });
+  }
+  if (G.player.moodles.thirst >= 70) {
+    const drinkIdx = G.player.inventory.findIndex(i => ITEMS[i.id]?.type === 'food' && ITEMS[i.id]?.thirst < 0);
+    if (drinkIdx >= 0) _quickBtns.push({ label:`💧 ${ITEMS[G.player.inventory[drinkIdx].id].name}`, color:'var(--cyan)', action: () => useFood(drinkIdx) });
+  }
+  if (G.player.moodles.pain >= 60 && hasItem('painkillers')) {
+    _quickBtns.push({ label:'💊 Обезбол.', color:'#ff8800', action: () => { const idx = G.player.inventory.findIndex(i=>i.id==='painkillers'); if (idx >= 0) useMedicine(idx); } });
+  }
+  _quickBtns.forEach(qb => {
+    const btn = document.createElement('button');
+    btn.className = 'act-btn';
+    btn.style.cssText = `border-color:${qb.color};color:${qb.color};font-size:10px;padding:4px 8px;animation:pulse 1.5s infinite`;
+    btn.textContent = qb.label;
+    btn.onclick = () => { ensureAudio(); qb.action(); };
+    actionsEl.appendChild(btn);
+  });
+
   actions.forEach(a => {
     if (!a.show) return;
     const btn = document.createElement('button');

@@ -201,9 +201,21 @@ function installUpgrade(ruinId, upgradeId) {
 }
 
 function collectWater(ruinId) {
+  const ruin = _findRuin(ruinId);
+  if (ruin) {
+    // Cooldown: 1 collection per day
+    if (ruin._lastWaterDay === (G.player.daysSurvived || 0)) {
+      addLog('Вода уже собрана сегодня. Приходите завтра.', 'warning');
+      return;
+    }
+    ruin._lastWaterDay = G.player.daysSurvived || 0;
+  }
   addItem('water', 1); calcWeight();
   addLog('Набрана бутылка воды.', 'success');
-  closeModal();
+  if (typeof showLootAnimation === 'function') showLootAnimation('Бутылка воды');
+  playSound('loot');
+  const b = _findBuilding(ruinId); if(b) showRuinUI(b);
+  saveGame();
 }
 
 function harvestGarden(ruinId) {

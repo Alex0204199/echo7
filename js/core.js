@@ -129,6 +129,8 @@ const ITEMS = {
   book_mechanics:{ name:'«Механика для всех»', type:'book', skill:'mechanics', xpBoost:50, weight:0.3, desc:'Книга о механике. +50 XP к механике', descEn:'Mechanics book. +50 XP to mechanics' },
   book_cooking:  { name:'«Кулинарная книга»', type:'book', skill:'cooking', xpBoost:50, weight:0.3, desc:'Кулинарная книга. +50 XP к кулинарии', descEn:'Cookbook. +50 XP to cooking' },
   book_firearms: { name:'«Огнестрельное оружие»', type:'book', skill:'firearms', xpBoost:50, weight:0.3, desc:'Книга о стрелковом оружии. +50 XP к стрельбе', descEn:'Firearms book. +50 XP to firearms' },
+  book_lockpicking:{ name:'«Замки и отмычки»', type:'book', skill:'lockpicking', xpBoost:50, weight:0.3, desc:'Пособие по взлому замков. +50 XP к взлому', descEn:'Lockpicking guide. +50 XP to lockpicking' },
+  book_carpentry: { name:'«Строительство и ремонт»', type:'book', skill:'carpentry', xpBoost:50, weight:0.3, desc:'Книга о строительстве. +50 XP к плотничеству', descEn:'Carpentry book. +50 XP to carpentry' },
 
   // ── Clothing — head ──
   // Гражданская
@@ -248,6 +250,7 @@ const ITEMS = {
   // ── Tools ──
   lockpick:  { name:'Отмычка', type:'material', weight:0.05, desc:'Отмычка для замков', descEn:'Lockpick for locks' },
   torch:     { name:'Факел', type:'material', weight:0.4, desc:'Освещает путь, отпугивает зомби', descEn:'Lights the way, scares zombies' },
+  flashlight:{ name:'Фонарик', type:'material', weight:0.3, desc:'Ручной фонарик. Лучше факела ночью', descEn:'Flashlight. Better than torch at night' },
   _key:      { name:'Ключ', type:'material', weight:0.02, desc:'Ключ от замка', descEn:'Key for a lock' },
 
   // ── Containers ──
@@ -256,6 +259,19 @@ const ITEMS = {
   // ── Electronics ──
   radio:     { name:'Рация', type:'radio', weight:0.5, desc:'Портативная рация. Требует батарейки для работы', descEn:'Portable radio. Requires batteries to operate' },
   battery:   { name:'Батарейки', type:'material', weight:0.1, desc:'Батарейки для электроники', descEn:'Batteries for electronics' },
+
+  // ── Crafting materials (new) ──
+  gunpowder: { name:'Порох', type:'material', weight:0.1, desc:'Порох. Для самодельных боеприпасов', descEn:'Gunpowder. For makeshift ammo' },
+  glass_shards:{ name:'Осколки стекла', type:'material', weight:0.15, desc:'Острые осколки. Для ловушек', descEn:'Sharp glass shards. For traps' },
+  herbs:     { name:'Травы', type:'material', weight:0.05, desc:'Лечебные травы. Для отваров', descEn:'Medicinal herbs. For brewing' },
+
+  // ── Consumable buffs ──
+  adrenaline:{ name:'Адреналин', type:'medicine', subtype:'buff', weight:0.05, desc:'Инъекция. +30% скорость атаки на 1 бой', descEn:'Injection. +30% attack speed for 1 combat' },
+  herbal_tea:{ name:'Травяной чай', type:'food', hunger:-5, thirst:-20, weight:0.3, noise:0, freshness:3, crafted:true, desc:'Снимает болезнь и усталость', descEn:'Reduces illness and fatigue' },
+
+  // ── Craftable weapons ──
+  pipe_bomb: { name:'Самодельная бомба', type:'weapon', subtype:'thrown', dmg:70, dur:1, weight:0.4, accuracy:15, noise:80, crafted:true, desc:'Мощное одноразовое оружие. Очень шумное', descEn:'Powerful single-use weapon. Very noisy' },
+  glass_trap:{ name:'Стеклянная ловушка', type:'material', weight:0.3, desc:'Устанавливается в комнате. Ранит зомби при входе', descEn:'Placed in a room. Injures zombies on entry' },
 
   // ── Lore ──
   note:      { name:'Записка', type:'lore', weight:0, desc:'Записка. Содержит историю выжившего', descEn:'Note. Contains a survivor story' },
@@ -286,7 +302,7 @@ const ICON_MAP = {
   // Row 6 — Food, comfort, books
   smoked_meat:[0,6], cigarettes:[1,6], magazine:[2,6], comics:[3,6], cards:[4,6], photo:[5,6], mp3player:[6,6], book_strength:[7,6], book_stealth:[8,6], book_scouting:[9,6], book_firstaid:[10,6], book_mechanics:[11,6],
   // Row 7 — Books, head clothing
-  book_cooking:[0,7], book_firearms:[1,7], hat_cap:[2,7], hat_winter:[3,7], bandana:[4,7], hat_ushanka:[5,7], helmet:[6,7], helmet_mil:[7,7], helmet_riot:[8,7], helmet_fire:[9,7], mask_gas:[10,7], hat_medic:[11,7],
+  book_cooking:[0,7], book_firearms:[1,7], book_lockpicking:[0,7], book_carpentry:[1,7], hat_cap:[2,7], hat_winter:[3,7], bandana:[4,7], hat_ushanka:[5,7], helmet:[6,7], helmet_mil:[7,7], helmet_riot:[8,7], helmet_fire:[9,7], mask_gas:[10,7], hat_medic:[11,7],
   // Row 8 — Torso clothing
   tshirt:[0,8], shirt:[1,8], hoodie:[2,8], jacket:[3,8], jacket_leather:[4,8], sweater:[5,8], coat_winter:[6,8], raincoat:[7,8], vest_hi:[8,8], vest_armor:[9,8], vest_police:[10,8], jacket_fire:[11,8],
   // Row 9 — Torso & legs
@@ -296,7 +312,7 @@ const ICON_MAP = {
   // Row 11 — Bags & materials
   bag_mil:[0,11], bag_medic:[1,11], bag_fire:[2,11], tape:[3,11], nails:[4,11], planks:[5,11], hammer:[6,11], rope:[7,11], can_empty:[8,11], bottle:[9,11], fuel:[10,11], cloth:[11,11],
   // Row 12 — no row 12 in 12×12 grid, remap to closest
-  duct_tape:[3,11], wire:[4,11], scrap_metal:[5,11], lockpick:[6,11], torch:[7,11], note:[8,11],
+  duct_tape:[3,11], wire:[4,11], scrap_metal:[5,11], lockpick:[6,11], torch:[7,11], flashlight:[7,11], note:[8,11],
   // Legacy aliases
   pistol:[0,1], shotgun:[6,1], rifle:[0,2], revolver:[4,1],
   ammo_9mm:[5,3], ammo_shells:[9,3], ammo_rifle:[10,3],
@@ -309,6 +325,9 @@ const ICON_MAP = {
   // New face items (→ mask_gas / bandana / hat_medic)
   balaclava_black:[10,7], balaclava_camo:[10,7], balaclava_skull:[10,7], scarf:[4,7], mask_surgical:[11,7],
   _key:[6,11],
+  // New crafting items
+  gunpowder:[5,11], glass_shards:[5,11], herbs:[0,6], adrenaline:[3,4], herbal_tea:[8,5],
+  pipe_bomb:[1,0], glass_trap:[6,11],
 };
 function itemIconStyle(id) {
   const pos = ICON_MAP[id];
@@ -328,7 +347,7 @@ function itemIconStyle(id) {
 function itemIconHtml(id, size) {
   const pos = ICON_MAP[id];
   if (!pos) {
-    const _fallback = { key_holder:'🔑', radio:'📻', battery:'🔋', note:'📜', _key:'🗝' };
+    const _fallback = { key_holder:'🔑', radio:'📻', battery:'🔋', note:'📜', _key:'🗝', gunpowder:'💣', glass_shards:'🔶', herbs:'🌿', adrenaline:'💉', herbal_tea:'🍵', pipe_bomb:'💣', glass_trap:'⚠' };
     if (_fallback[id]) return `<div style="width:${size||32}px;height:${size||32}px;display:flex;align-items:center;justify-content:center;font-size:${Math.round((size||32)*0.6)}px">${_fallback[id]}</div>`;
     return '';
   }
@@ -421,15 +440,15 @@ function mapIconHtml(id, size) {
 // ── LOOT TABLES ──
 const LOOT_TABLES = {
   supermarket: { common:['canned_food','water','chips','bread','energy_bar','can_empty','bottle','soda','chocolate'], uncommon:['bandage','tape','bag','rope','cloth','magazine','cigarettes','coffee','tshirt','shorts','battery'], rare:['backpack','antibiotics','knife','whiskey','sweater','raincoat'] },
-  pharmacy:    { common:['bandage','disinfectant','painkillers','vitamins'], uncommon:['antibiotics','splint','antidepressants','scrubs','hat_medic'], rare:['backpack','note','book_firstaid','bag_medic','pants_medic'] },
-  house:       { common:['water','bread','canned_food','cloth','can_empty','magazine','comics','cigarettes'], uncommon:['knife','bandage','tape','chips','hoodie','pants_jeans','sneakers','hat_cap','coffee','photo','tshirt','shirt','pants_sport','bandana','battery'], rare:['bat','painkillers','backpack','note','book_cooking','whiskey','mp3player','cards','jacket_leather','jacket','coat_winter','hat_ushanka','boots','valenki','key_holder'] },
-  warehouse:   { common:['planks','nails','rope','tape','can_empty','scrap_metal','wire','cloth'], uncommon:['hammer','pipe','fuel','duct_tape','vest_hi','boots','crowbar','overalls','helmet','boots_rubber'], rare:['axe','backpack','note','book_mechanics','mask_gas'] },
+  pharmacy:    { common:['bandage','disinfectant','painkillers','vitamins'], uncommon:['antibiotics','splint','antidepressants','scrubs','hat_medic','herbs'], rare:['backpack','note','book_firstaid','bag_medic','pants_medic','adrenaline'] },
+  house:       { common:['water','bread','canned_food','cloth','can_empty','magazine','comics','cigarettes'], uncommon:['knife','bandage','tape','chips','hoodie','pants_jeans','sneakers','hat_cap','coffee','photo','tshirt','shirt','pants_sport','bandana','battery','flashlight'], rare:['bat','painkillers','backpack','note','book_cooking','book_carpentry','whiskey','mp3player','cards','jacket_leather','jacket','coat_winter','hat_ushanka','boots','valenki','key_holder'] },
+  warehouse:   { common:['planks','nails','rope','tape','can_empty','scrap_metal','wire','cloth'], uncommon:['hammer','pipe','fuel','duct_tape','vest_hi','boots','crowbar','overalls','helmet','boots_rubber'], rare:['axe','backpack','note','book_mechanics','book_carpentry','mask_gas'] },
   garage:      { common:['pipe','nails','fuel','bottle','scrap_metal','wire'], uncommon:['hammer','tape','rope','stick','crowbar','duct_tape','overalls','boots'], rare:['axe','knife','machete','jacket_leather'] },
-  office:      { common:['water','chips','energy_bar','can_empty','magazine','comics'], uncommon:['bandage','painkillers','bag','cigarettes','coffee','shirt','shoes','pants_jeans','battery'], rare:['note','backpack','book_scouting','antidepressants','jacket'] },
-  military:    { common:['canned_food','water','bandage','rope','ammo_545x39','ammo_762x39','ammo_9x18','battery'], uncommon:['knife','antibiotics','splint','disinfectant','helmet_mil','pants_mil','boots_mil','vest_armor','jacket_mil','mask_gas','mag_ak74','mag_akm','mag_pm'], rare:['pm','ak74','akm','sks','svd','bag_mil','book_firearms','book_strength','mag_svd','ammo_762x54R','radio'] },
-  street:      { common:['rock','stick','can_empty','bottle','cloth','cigarettes'], uncommon:['pipe','rope','sneakers','hat_cap','bandana','sandals'], rare:['knife','bag','note','crowbar','hoodie'] },
+  office:      { common:['water','chips','energy_bar','can_empty','magazine','comics'], uncommon:['bandage','painkillers','bag','cigarettes','coffee','shirt','shoes','pants_jeans','battery','flashlight'], rare:['note','backpack','book_scouting','antidepressants','jacket'] },
+  military:    { common:['canned_food','water','bandage','rope','ammo_545x39','ammo_762x39','ammo_9x18','battery'], uncommon:['knife','antibiotics','splint','disinfectant','helmet_mil','pants_mil','boots_mil','vest_armor','jacket_mil','mask_gas','mag_ak74','mag_akm','mag_pm','gunpowder'], rare:['pm','ak74','akm','sks','svd','bag_mil','book_firearms','book_strength','mag_svd','ammo_762x54R','radio','adrenaline'] },
+  street:      { common:['rock','stick','can_empty','bottle','cloth','cigarettes','herbs'], uncommon:['pipe','rope','sneakers','hat_cap','bandana','sandals'], rare:['knife','bag','note','crowbar','hoodie'] },
   fire_station:{ common:['canned_food','water','bandage','rope','cloth'], uncommon:['axe','helmet_fire','jacket_fire','pants_fire','boots_fire','splint','disinfectant'], rare:['bag_fire','mask_gas','book_strength','crowbar'] },
-  police:      { common:['canned_food','water','bandage','ammo_9x19','ammo_9x18'], uncommon:['pm','glock17','jacket_police','pants_police','helmet_riot','vest_police','knife','splint','mag_pm','mag_glock'], rare:['mp133','remington','revolver_357','book_firearms','bag_mil','ammo_12ga','ammo_357','radio'] },
+  police:      { common:['canned_food','water','bandage','ammo_9x19','ammo_9x18'], uncommon:['pm','glock17','jacket_police','pants_police','helmet_riot','vest_police','knife','splint','mag_pm','mag_glock','gunpowder'], rare:['mp133','remington','revolver_357','book_firearms','book_lockpicking','bag_mil','ammo_12ga','ammo_357','radio'] },
   car_glove:   { common:['cigarettes','magazine','bandana','can_empty'], uncommon:['knife','bandage','water','sunglasses'], rare:['ammo_9x19','painkillers','pm'] },
   car_trunk:   { common:['rope','tape','bottle','can_empty','cloth'], uncommon:['fuel','pipe','planks','crowbar','jacket'], rare:['axe','backpack','bag','ammo_12ga'] },
   gas_station: { common:['chips','soda','water','cigarettes','energy_bar','chocolate'], uncommon:['fuel','tape','knife','magazine','coffee','battery'], rare:['backpack','crowbar','whiskey'] },
@@ -437,13 +456,22 @@ const LOOT_TABLES = {
 
 // ── WORLD MAP CONFIG ──
 const WORLD_CONFIG = {
-  gridW: 40, gridH: 40,
-  cellPx: 14, // pixels per cell on map canvas
+  gridW: 100, gridH: 100,
+  originX: -30, originY: -30,
+  cellPx: 14,
   regions: [
-    { id:'suburbs',    name:'Пригород',  gx:0,  gy:0,  w:20, h:20, scoutReq:0, riskBase:15 },
-    { id:'city',       name:'Сити-центр',gx:0,  gy:20, w:20, h:20, scoutReq:2, riskBase:30 },
-    { id:'industrial', name:'Промзона',  gx:20, gy:20, w:20, h:20, scoutReq:3, riskBase:40 },
-    { id:'forest',     name:'Лес',       gx:20, gy:0,  w:20, h:20, scoutReq:1, riskBase:20 },
+    // Main city (unchanged coordinates)
+    { id:'suburbs',    name:'Пригород',        gx:0,  gy:0,  w:20, h:20, scoutReq:0, riskBase:15, genType:'urban' },
+    { id:'city',       name:'Сити-центр',      gx:0,  gy:20, w:20, h:20, scoutReq:2, riskBase:30, genType:'urban' },
+    { id:'industrial', name:'Промзона',        gx:20, gy:20, w:20, h:20, scoutReq:3, riskBase:40, genType:'urban' },
+    { id:'forest',     name:'Лес',             gx:20, gy:0,  w:20, h:20, scoutReq:1, riskBase:20, genType:'urban' },
+    // Second town — village to the southeast
+    { id:'village',    name:'Посёлок',         gx:50, gy:50, w:20, h:20, scoutReq:4, riskBase:30, genType:'urban' },
+    // Wilderness ring (wide)
+    { id:'wild_n', name:'Северные поля',       gx:-30, gy:-30, w:100, h:30, scoutReq:2, riskBase:20, genType:'wilderness', groundColor:'#0e2a0e' },
+    { id:'wild_s', name:'Южные болота',        gx:-30, gy:40,  w:100, h:30, scoutReq:3, riskBase:35, genType:'wilderness', groundColor:'#0e2218' },
+    { id:'wild_w', name:'Западный лес',        gx:-30, gy:0,   w:30,  h:40, scoutReq:2, riskBase:25, genType:'wilderness', groundColor:'#0e320e' },
+    { id:'wild_e', name:'Восточная пустошь',   gx:40,  gy:0,   w:30,  h:40, scoutReq:4, riskBase:45, genType:'wilderness', groundColor:'#1e1e0e' },
   ]
 };
 
@@ -464,6 +492,15 @@ const NODE_TYPES = {
   npc_wall: { name:'Стена поселения', time:99, danger:0, lootTable:null, color:'#887744', shape:'wall', blocked:true },
   npc_gate: { name:'Ворота поселения', time:2, danger:0, lootTable:null, color:'#aaaa44', shape:'gate' },
   ground:   { name:'Пустырь', time:6, danger:0.03, lootTable:null, color:'#0a1a0a', shape:'ground' },
+  // Wilderness types
+  highway:      { name:'Шоссе',              time:3,  danger:0.05, lootTable:'street',  color:'#2a2a1a', shape:'line_wide' },
+  dirt_road:    { name:'Грунтовка',          time:6,  danger:0.08, lootTable:'street',  color:'#1a1a0a', shape:'line' },
+  river:        { name:'Река',               time:99, danger:0,    lootTable:null,      color:'#1a3366', shape:'water', blocked:true },
+  lake:         { name:'Озеро',              time:99, danger:0,    lootTable:null,      color:'#1a2a55', shape:'water', blocked:true },
+  bridge:       { name:'Мост',               time:4,  danger:0.10, lootTable:null,      color:'#4a3a2a', shape:'rect_sm' },
+  deep_forest:  { name:'Густой лес',         time:12, danger:0.15, lootTable:null,      color:'#0e2e0e', shape:'ground' },
+  field:        { name:'Поле',               time:7,  danger:0.04, lootTable:null,      color:'#1e3a12', shape:'ground' },
+  swamp:        { name:'Болото',             time:15, danger:0.20, lootTable:null,      color:'#142a1a', shape:'ground' },
 };
 
 // ═══════════════════════════════════════════
@@ -623,6 +660,11 @@ const REGION_BUILDINGS = {
   city:       { house:5, supermarket:3, pharmacy:3, office:5, warehouse:2, police:1, gas_station:2, fire_station:1, cafe:4, hotel:2, bank:1, clinic:2, bar:2, shop:3 },
   industrial: { warehouse:6, garage:4, military:1, fire_station:1, office:2, house:2, gas_station:2, factory:3 },
   forest:     { house:5, garage:3, warehouse:1, cabin:3, ranger_station:1 },
+  village:    { house:8, garage:3, gas_station:1, pharmacy:1, cafe:2, church:1, shop:1, cabin:2 },
+  wild_n:     { cabin:3, gas_station:2, house:2, garage:1 },
+  wild_s:     { cabin:2, ranger_station:2, house:1, garage:1 },
+  wild_w:     { cabin:3, ranger_station:1, house:2, garage:1 },
+  wild_e:     { cabin:2, gas_station:2, house:1, garage:1 },
 };
 
 // ── RECIPES ──
@@ -641,6 +683,14 @@ const RECIPES = [
   { id:'smoked_meat', name:'Вяленое мясо', components:{meat_raw:2,rope:1}, skill:'cooking', skillReq:3, result:'_smoked_meat' },
   { id:'lockpick', name:'Отмычка', components:{wire:2,scrap_metal:1}, skill:'mechanics', skillReq:2, result:'_lockpick' },
   { id:'torch', name:'Факел', components:{stick:1,cloth:1,fuel:1}, skill:null, skillReq:0, result:'_torch' },
+  { id:'flashlight_craft', name:'Фонарик', components:{wire:1,battery:1,bottle:1}, skill:'mechanics', skillReq:2, result:'flashlight', desc:'Ручной фонарик. Лучше факела ночью' },
+  { id:'boiled_water', name:'Кипячёная вода', components:{water:1,fuel:1}, skill:'cooking', skillReq:1, result:'_boiled_water', needsBase:true, desc:'Чистая вода. Снижает болезнь' },
+  { id:'armor_patch', name:'Заплатка', components:{cloth:3,tape:1}, skill:'mechanics', skillReq:1, result:'_armor_patch', desc:'Усиливает одежду. Нужно надеть' },
+  { id:'herbal_tea', name:'Травяной чай', components:{herbs:1,water:1}, skill:'cooking', skillReq:1, result:'_herbal_tea', needsBase:true, desc:'Снижает болезнь −20, усталость −15' },
+  { id:'glass_shards_craft', name:'Осколки стекла', components:{bottle:2}, skill:null, skillReq:0, result:'glass_shards', desc:'Разбить бутылки на осколки' },
+  { id:'glass_trap_craft', name:'Стеклянная ловушка', components:{glass_shards:2,rope:1}, skill:'mechanics', skillReq:2, result:'_glass_trap', needsBase:true, desc:'Ранит зомби при набеге. +3 безопасность' },
+  { id:'pipe_bomb', name:'Самодельная бомба', components:{gunpowder:2,can_empty:1,wire:1}, skill:'mechanics', skillReq:3, result:'pipe_bomb', desc:'70 урона. Одноразовое. Очень шумное' },
+  { id:'ammo_craft_9mm', name:'Патроны 9×19', components:{gunpowder:1,scrap_metal:2}, skill:'mechanics', skillReq:3, result:'_ammo_9x19', desc:'Самодельные патроны ×5' },
 ];
 
 // ── ZOMBIE TYPES ──
@@ -703,15 +753,15 @@ const ROOM_FURNITURE = {
 // Loot pools per furniture name (logical loot)
 const FURNITURE_LOOT = {
   'Холодильник':  { pool:['canned_food','water','bread','soda','chocolate','chips'], count:[1,3] },
-  'Шкаф кухонный':{ pool:['canned_food','bread','coffee','chips','bottle','can_empty'], count:[1,2] },
+  'Шкаф кухонный':{ pool:['canned_food','bread','coffee','chips','bottle','can_empty','herbs'], count:[1,2] },
   'Плита':        { pool:['can_empty'], count:[0,1] },
   'Ящик с приборами':{ pool:['knife','can_empty'], count:[0,1] },
   'Стол':         { pool:['water','magazine','cigarettes','coffee','comics'], count:[0,2] },
   'Аптечка':      { pool:['bandage','disinfectant','painkillers','vitamins','antibiotics'], count:[1,3] },
   'Шкафчик':      { pool:['bandage','cloth','magazine','cigarettes','water'], count:[0,2] },
   'Стир. машина': { pool:['cloth'], count:[0,1] },
-  'Шкаф':         { pool:['cloth','hoodie','pants_jeans','bag','magazine','book_cooking','book_scouting','jacket','sweater','coat_winter','shirt','jacket_leather','raincoat','pants_cargo','pants_sport'], count:[1,3] },
-  'Тумбочка':     { pool:['painkillers','magazine','comics','cigarettes','mp3player','photo','cards'], count:[0,2] },
+  'Шкаф':         { pool:['cloth','hoodie','pants_jeans','bag','magazine','book_cooking','book_scouting','book_carpentry','book_lockpicking','jacket','sweater','coat_winter','shirt','jacket_leather','raincoat','pants_cargo','pants_sport'], count:[1,3] },
+  'Тумбочка':     { pool:['painkillers','magazine','comics','cigarettes','mp3player','photo','cards','flashlight','battery'], count:[0,2] },
   'Кровать':      { pool:['cloth','magazine','comics'], count:[0,1] },
   'Кровать детская':{ pool:['comics','cloth'], count:[0,1] },
   'Комод':        { pool:['cloth','hoodie','pants_jeans','hat_cap','tshirt','shirt','bandana','shorts','pants_sport','sweater','hat_ushanka'], count:[1,2] },
@@ -1021,6 +1071,15 @@ const LOCATION_TEMPLATES = {
     ]},
     hasSecondFloor: false, buildingRelW:.6, buildingRelH:.5,
   },
+  gas_station: {
+    name:'АЗС', lootType:'gas_station', baseInfest:[0,2],
+    floors: { 0: [
+      { name:'Магазин', type:'room', weight:3 },
+      { name:'Подсобка', type:'closet', weight:2 },
+      { name:'Туалет', type:'closet', weight:1 },
+    ]},
+    hasSecondFloor: false, buildingRelW:.5, buildingRelH:.4,
+  },
 };
 
 // ── REGIONS ──
@@ -1029,6 +1088,7 @@ const REGION_TEMPLATES = [
   { id:'city', name:'Сити-центр', scoutReq:2, locations:['office','supermarket','pharmacy','house','warehouse','police'], riskBase:30 },
   { id:'industrial', name:'Промзона', scoutReq:3, locations:['warehouse','warehouse','garage','military','fire_station'], riskBase:40 },
   { id:'forest', name:'Лес', scoutReq:1, locations:['house','garage'], riskBase:20 },
+  { id:'village', name:'Посёлок', scoutReq:4, locations:['house','house','garage','cafe'], riskBase:30 },
 ];
 
 // ── OCCUPATIONS (PZ-inspired) ──
@@ -1210,6 +1270,8 @@ const STREET_NAMES = {
   city:       ['Ленина','Мира','Победы','Центральная','Советская','Пушкина','Горького','Маяковского','Красная','Октябрьская'],
   industrial: ['Заводская','Монтажная','Трубная','Складская','Литейная','Промышленная','Станционная','Тракторная','Железнодорожная','Кирпичная'],
   forest:     ['Лесная','Охотничья','Грибная','Еловая','Сосновая','Озёрная','Болотная','Таёжная','Медвежья','Волчья'],
+  village:    ['Деревенская','Колхозная','Молочная','Пчелиная','Цветочная','Хлебная','Мостовая','Речная','Тополиная','Рябиновая'],
+  wilderness: ['Дальняя','Глухая','Туристическая','Рыбацкая','Оленья','Старая','Забытая','Тупиковая','Просёлочная','Трасса'],
 };
 
 // ═══════════════════════════════════════════

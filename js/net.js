@@ -107,7 +107,7 @@ const Net = {
       if (msg.t === 'joined') {
         clearTimeout(this._connectTimeout);
         this.localId = msg.id;
-        console.log('[NET] Joined room as', msg.id);
+        // debug: console.log('[NET] Joined room as', msg.id);
       }
       if (msg.t === 'fromhost') this._handleMessage('host', msg.data);
       if (msg.t === 'error') {
@@ -303,7 +303,7 @@ const Net = {
 
   _onWelcome(msg) {
     this.localId = msg.id;
-    console.log('[NET] Welcome! ID:', msg.id);
+    // debug: console.log('[NET] Welcome! ID:', msg.id);
     Object.entries(msg.players).forEach(([id, info]) => {
       this.players[id] = info;
       if (id !== this.localId) sceneData.remotePlayers[id] = { ...info, color: '#00E5FF' };

@@ -435,6 +435,7 @@ function generateWorld() {
   let globalBldIdx = 0;
 
   WORLD_CONFIG.regions.forEach((reg, ri) => {
+    if (reg.genType === 'wilderness') return; // wilderness generated separately
     const ox = reg.gx, oy = reg.gy, rw = reg.w, rh = reg.h;
 
     // Phase 1: Road network
@@ -967,9 +968,9 @@ function generateWorld() {
     }
   }
 
-  // ── Fill empty cells with traversable ground nodes ──
-  for (let gx = 0; gx < WORLD_CONFIG.gridW; gx++) {
-    for (let gy = 0; gy < WORLD_CONFIG.gridH; gy++) {
+  // ── Fill empty cells with traversable ground nodes (urban area only) ──
+  for (let gx = 0; gx < 40; gx++) {
+    for (let gy = 0; gy < 40; gy++) {
       const id = nid(gx, gy);
       if (nodes[id]) continue;
       // Determine region
@@ -1094,6 +1095,437 @@ function generateWorld() {
     G.radio.airdropNodeId = adNode.id;
     G.radio.airdropStreet = adNode.streetName || 'неизвестная улица';
   }
+
+  // ══════════════════════════════════════════════════════
+  // WILDERNESS GENERATION — Realistic Road Network
+  // ══════════════════════════════════════════════════════
+
+  // Helper: place highway node at (x,y) if empty, return node
+  function placeHW(x, y, regId) {
+    if (nodes[nid(x, y)]) return nodes[nid(x, y)];
+    return addNode(x, y, 'highway', regId, { name: 'Шоссе' });
+  }
+  // Helper: connect sequential highway
+  function hwLine(x1, y1, x2, y2, regId) {
+    const dx = Math.sign(x2 - x1), dy = Math.sign(y2 - y1);
+    let x = x1, y = y1, prev = null;
+    while (true) {
+      const n = placeHW(x, y, regId);
+      if (prev) connect(prev.id, n.id);
+      prev = n;
+      if (x === x2 && y === y2) break;
+      if (x !== x2) x += dx;
+      if (y !== y2) y += dy;
+    }
+  }
+  // Helper: get region id for coords
+  function getWildRegion(x, y) {
+    for (const r of WORLD_CONFIG.regions) {
+      if (r.genType === 'wilderness' && x >= r.gx && x < r.gx + r.w && y >= r.gy && y < r.gy + r.h) return r.id;
+    }
+    return 'wild_n';
+  }
+
+  // ── W1: Ring highway around city (at distance ~5 from edges) ──
+  const ringD = 5; // distance from city edge
+  const ringCoords = [
+    [-ringD, -ringD], [39+ringD, -ringD], [39+ringD, 39+ringD], [-ringD, 39+ringD]
+  ];
+  // North side: (-5,-5) → (44,-5)
+  hwLine(ringCoords[0][0], ringCoords[0][1], ringCoords[1][0], ringCoords[1][1], 'wild_n');
+  // East side: (44,-5) → (44,44)
+  hwLine(ringCoords[1][0], ringCoords[1][1], ringCoords[2][0], ringCoords[2][1], 'wild_e');
+  // South side: (44,44) → (-5,44)
+  hwLine(ringCoords[2][0], ringCoords[2][1], ringCoords[3][0], ringCoords[3][1], 'wild_s');
+  // West side: (-5,44) → (-5,-5)
+  hwLine(ringCoords[3][0], ringCoords[3][1], ringCoords[0][0], ringCoords[0][1], 'wild_w');
+
+  // ── W2: Radial highways from ring to city (4 entry points) ──
+  // North entry: (-5,-5) → (10,0) connect to suburbs
+  hwLine(-ringD, -ringD, 10, -1, 'wild_n');
+  // South entry: (20,44) → (20,39) connect to city/industrial boundary
+  hwLine(20, 39+ringD, 20, 40, 'wild_s');
+  // West entry: (-5,20) → (-1,20) connect to city
+  hwLine(-ringD, 20, -1, 20, 'wild_w');
+  // East entry: (44,10) → (40,10) connect to forest
+  hwLine(39+ringD, 10, 40, 10, 'wild_e');
+
+  // ── W2b: Extended highways outward from ring ──
+  // North outward: (20,-5) → (20,-25)
+  hwLine(20, -ringD, 20, -25, 'wild_n');
+  // South outward: (20,44) → (20,65)
+  hwLine(20, 39+ringD, 20, 65, 'wild_s');
+  // West outward: (-5,20) → (-25,20)
+  hwLine(-ringD, 20, -25, 20, 'wild_w');
+  // East outward: (44,20) → (65,20)
+  hwLine(39+ringD, 20, 65, 20, 'wild_e');
+
+  // ── W3: Connect radial endpoints to nearest urban road ──
+  const urbanEntries = [
+    { wx:10, wy:-1, searchDir:[[0,1],[1,1],[-1,1]], range:5 },   // North → suburbs
+    { wx:20, wy:40, searchDir:[[0,-1],[1,-1],[-1,-1]], range:5 }, // South → city/industrial
+    { wx:-1, wy:20, searchDir:[[1,0],[1,1],[1,-1]], range:5 },    // West → city
+    { wx:40, wy:10, searchDir:[[-1,0],[-1,1],[-1,-1]], range:5 }, // East → forest
+  ];
+  urbanEntries.forEach(ue => {
+    const wId = nid(ue.wx, ue.wy);
+    if (!nodes[wId]) return;
+    let connected = false;
+    for (let d = 1; d <= ue.range && !connected; d++) {
+      for (const [sdx, sdy] of ue.searchDir) {
+        const tid = nid(ue.wx + sdx * d, ue.wy + sdy * d);
+        if (nodes[tid] && !nodes[tid].blocked) {
+          connect(wId, tid);
+          connected = true; break;
+        }
+      }
+    }
+  });
+
+  // ── W3.5: Highway POIs — gas stations, car wrecks, rest stops ──
+  const allHWNodes = Object.values(nodes).filter(n => n.type === 'highway');
+  allHWNodes.forEach((hwn, i) => {
+    // Gas station every ~20 highway nodes (as lootable POI node)
+    if (i % 20 === 10 && !nodes[nid(hwn.gx + 1, hwn.gy)]) {
+      const gsn = addNode(hwn.gx + 1, hwn.gy, 'gas_station', hwn.regionId, { name: 'АЗС' });
+      gsn.lootContainers = [
+        { name:'Полки', icon:'▬', searched:false, locked:null, loot:generateLootFromTable('gas_station', rng.int(2,4)) },
+        { name:'Подсобка', icon:'□', searched:false, locked:null, loot:generateLootFromTable('warehouse', rng.int(1,2)) },
+      ];
+      connect(hwn.id, gsn.id);
+    }
+    // Car wreck every ~12 nodes (15% chance)
+    if (i % 12 === 6 && rng.chance(60)) {
+      if (!nodes[nid(hwn.gx, hwn.gy - 1)]) {
+        const cw = addNode(hwn.gx, hwn.gy - 1, 'car_wreck', hwn.regionId, { name: 'Разбитая машина' });
+        cw.lootContainers = [
+          { name:'Бардачок', icon:'□', searched:false, locked:null, loot:generateLootFromTable('car_glove', rng.int(1,3)) },
+          { name:'Багажник', icon:'▬', searched:false, locked:null, loot:generateLootFromTable('car_trunk', rng.int(0,2)) },
+        ];
+        connect(hwn.id, cw.id);
+      }
+    }
+    // Bus stop / rest area every ~25 nodes
+    if (i % 25 === 18 && !nodes[nid(hwn.gx - 1, hwn.gy)]) {
+      const bs = addNode(hwn.gx - 1, hwn.gy, 'bus_stop', hwn.regionId, { name: 'Остановка' });
+      bs.lootContainers = [{ name:'Скамейка', icon:'▬', searched:false, locked:null, loot:generateLootFromTable('street', rng.int(0,2)) }];
+      connect(hwn.id, bs.id);
+    }
+  });
+
+  // ── W3.6: Second route to village (from south side) ──
+  const _villageReg = WORLD_CONFIG.regions.find(r => r.id === 'village');
+  if (_villageReg) {
+    // South highway: from ring south side (20,44) → village south entrance (vgx+10, vgy+rh)
+    const vgx2 = _villageReg.gx, vgy2 = _villageReg.gy, vrh = _villageReg.h;
+    hwLine(20, 44, vgx2 + 10, vgy2 + vrh - 1, 'wild_s');
+    // Connect last node to village road
+    const lastSouth = nid(vgx2 + 10, vgy2 + vrh - 1);
+    if (nodes[lastSouth]) {
+      for (let d = 1; d <= 5; d++) {
+        const tid = nid(vgx2 + 10, vgy2 + vrh - 1 - d);
+        if (nodes[tid] && nodes[tid].regionId === 'village' && !nodes[tid].blocked) { connect(lastSouth, tid); break; }
+      }
+    }
+  }
+
+  // ── W4: Per-region features (rivers, lakes, dirt roads, buildings) ──
+  WORLD_CONFIG.regions.forEach(reg => {
+    if (reg.genType !== 'wilderness') return;
+    const ox = reg.gx, oy = reg.gy, rw = reg.w, rh = reg.h;
+
+    // Dirt road branches from highway nodes in this region (3-6 per region)
+    const regHW = Object.values(nodes).filter(n => n.regionId === reg.id && n.type === 'highway');
+    const branchCount = rng.int(3, 6);
+    for (let b = 0; b < branchCount; b++) {
+      if (regHW.length === 0) break;
+      const origin = regHW[rng.int(0, regHW.length - 1)];
+      const len = rng.int(3, 8);
+      const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
+      const [ddx, ddy] = dirs[rng.int(0, 3)];
+      let cx = origin.gx, cy = origin.gy;
+      const branchNodes = [];
+      for (let s = 0; s < len; s++) {
+        cx += ddx; cy += ddy;
+        if (nodes[nid(cx, cy)] || cx < ox || cx >= ox + rw || cy < oy || cy >= oy + rh) break;
+        const dn = addNode(cx, cy, 'dirt_road', reg.id, { name: 'Грунтовка' });
+        const prevId = s === 0 ? origin.id : branchNodes[s - 1].id;
+        connect(prevId, dn.id);
+        branchNodes.push(dn);
+      }
+      // Loop back: connect last dirt_road to nearest highway (if within 5 cells)
+      if (branchNodes.length >= 3) {
+        const last = branchNodes[branchNodes.length - 1];
+        let bestD = 999, bestHW = null;
+        regHW.forEach(hw => {
+          if (hw.id === origin.id) return;
+          const d = Math.abs(hw.gx - last.gx) + Math.abs(hw.gy - last.gy);
+          if (d < bestD && d <= 6) { bestD = d; bestHW = hw; }
+        });
+        if (bestHW) connect(last.id, bestHW.id);
+      }
+    }
+
+    // River (70% chance, longer = more realistic)
+    if (rng.chance(70)) {
+      const isH = rw > rh;
+      let rx = isH ? ox + rng.int(5, rw - 5) : ox, ry = isH ? oy : oy + rng.int(5, rh - 5);
+      const rdx = isH ? 0 : 1, rdy = isH ? 1 : 0;
+      const riverLen = rng.int(Math.min(20, rh), Math.min(40, Math.max(rw, rh) - 2));
+      for (let r = 0; r < riverLen; r++) {
+        if (rx < ox || rx >= ox + rw || ry < oy || ry >= oy + rh) break;
+        const ex = nodes[nid(rx, ry)];
+        if (ex && (ex.type === 'highway' || ex.type === 'dirt_road')) { ex.type = 'bridge'; ex.name = 'Мост'; }
+        else if (!ex) addNode(rx, ry, 'river', reg.id, { name: 'Река', blocked: true });
+        rx += rdx; ry += rdy;
+        if (rng.chance(25)) { if (isH) rx += rng.chance(50) ? 1 : -1; else ry += rng.chance(50) ? 1 : -1; }
+      }
+    }
+
+    // Lake (50% chance, bigger + shore terrain)
+    if (rng.chance(50)) {
+      const lx = ox + rng.int(4, rw - 5), ly = oy + rng.int(4, rh - 5);
+      const queue = [[lx, ly]]; let placed = 0;
+      const lakeNodes = [];
+      while (queue.length && placed < rng.int(5, 12)) {
+        const [px, py] = queue.shift();
+        if (px < ox || px >= ox + rw || py < oy || py >= oy + rh || nodes[nid(px, py)]) continue;
+        const ln = addNode(px, py, 'lake', reg.id, { name: 'Озеро', blocked: true }); placed++;
+        lakeNodes.push(ln);
+        [[1,0],[-1,0],[0,1],[0,-1]].forEach(([d2x,d2y]) => { if (rng.chance(55)) queue.push([px+d2x,py+d2y]); });
+      }
+      // Add shore terrain around lake
+      lakeNodes.forEach(ln => {
+        [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]].forEach(([sx,sy]) => {
+          const shx = ln.gx+sx, shy = ln.gy+sy;
+          if (nodes[nid(shx,shy)] || shx<ox || shx>=ox+rw || shy<oy || shy>=oy+rh) return;
+          if (!rng.chance(40)) return;
+          const sn = addNode(shx, shy, 'field', reg.id, { name: 'Берег' });
+          // Connect shore to nearest non-blocked node
+          [[1,0],[-1,0],[0,1],[0,-1]].forEach(([cx,cy]) => {
+            const adj = nodes[nid(shx+cx,shy+cy)];
+            if (adj && !adj.blocked) connect(sn.id, adj.id);
+          });
+        });
+      });
+    }
+
+    // Terrain fill: 100% adjacent to roads (no black gaps), 20% for 2nd ring
+    const roadTypes = new Set(['highway','dirt_road','bridge','gas_station','bus_stop','car_wreck']);
+    // Pass 1: fill ALL cells adjacent to roads
+    Object.values(nodes).filter(n => n.regionId === reg.id && roadTypes.has(n.type)).forEach(n => {
+      [[0,-1],[0,1],[-1,0],[1,0],[1,1],[-1,-1],[1,-1],[-1,1]].forEach(([d2x,d2y]) => {
+        const ax = n.gx + d2x, ay = n.gy + d2y;
+        if (nodes[nid(ax, ay)] || ax < ox || ax >= ox + rw || ay < oy || ay >= oy + rh) return;
+        const tt = reg.id === 'wild_s' ? 'swamp' : rng.chance(70) ? 'deep_forest' : 'field';
+        const tn = addNode(ax, ay, tt, reg.id, { name: NODE_TYPES[tt].name });
+        if (!n.blocked && !tn.blocked) connect(n.id, tn.id);
+      });
+    });
+    // Pass 2: fill ALL 8 neighbors of terrain nodes (eliminate black gaps)
+    for (let pass = 0; pass < 3; pass++) {
+      Object.values(nodes).filter(n => n.regionId === reg.id && (n.type === 'deep_forest' || n.type === 'field' || n.type === 'swamp')).forEach(n => {
+        [[0,-1],[0,1],[-1,0],[1,0],[1,1],[-1,-1],[1,-1],[-1,1]].forEach(([d2x,d2y]) => {
+          const ax = n.gx + d2x, ay = n.gy + d2y;
+          if (nodes[nid(ax, ay)] || ax < ox || ax >= ox + rw || ay < oy || ay >= oy + rh) return;
+          if (!rng.chance(pass === 0 ? 60 : pass === 1 ? 40 : 25)) return;
+          const tt = reg.id === 'wild_s' ? 'swamp' : rng.chance(70) ? 'deep_forest' : 'field';
+          const tn = addNode(ax, ay, tt, reg.id, { name: NODE_TYPES[tt].name });
+          if (!n.blocked && !tn.blocked) connect(n.id, tn.id);
+        });
+      });
+    }
+
+    // Pass 3: Fill ALL remaining empty cells in region with terrain (no black gaps)
+    for (let gx = ox; gx < ox + rw; gx++) {
+      for (let gy = oy; gy < oy + rh; gy++) {
+        if (nodes[nid(gx, gy)]) continue;
+        const tt = reg.id === 'wild_s' ? (rng.chance(60) ? 'swamp' : 'deep_forest') :
+                   reg.id === 'wild_w' ? (rng.chance(80) ? 'deep_forest' : 'field') :
+                   reg.id === 'wild_e' ? (rng.chance(50) ? 'field' : 'deep_forest') :
+                   rng.chance(60) ? 'field' : 'deep_forest';
+        const tn = addNode(gx, gy, tt, reg.id, { name: NODE_TYPES[tt].name });
+        // Connect to any adjacent non-blocked node
+        [[0,-1],[0,1],[-1,0],[1,0]].forEach(([d2x,d2y]) => {
+          const adj = nodes[nid(gx+d2x, gy+d2y)];
+          if (adj && !adj.blocked && !tn.blocked) connect(tn.id, adj.id);
+        });
+      }
+    }
+
+    // Buildings on dirt roads AND highways (max 8 per region)
+    const dirtR = Object.values(nodes).filter(n => n.regionId === reg.id && (n.type === 'dirt_road' || n.type === 'highway'));
+    const bPool = REGION_BUILDINGS[reg.id] || {};
+    const bTypes = []; Object.entries(bPool).forEach(([t, w]) => { for (let i = 0; i < w; i++) bTypes.push(t); });
+    let bP = 0;
+    dirtR.forEach(dr => {
+      if (bP >= 8 || !bTypes.length) return;
+      [[0,-1],[0,1],[-1,0],[1,0]].forEach(([d2x,d2y]) => {
+        if (bP >= 8) return;
+        const bx = dr.gx + d2x, by = dr.gy + d2y;
+        if (nodes[nid(bx, by)] || bx < ox || bx >= ox + rw || by < oy || by >= oy + rh || !rng.chance(25)) return;
+        globalBldIdx++;
+        const bld = generateBuilding(bTypes[rng.int(0, bTypes.length - 1)], globalBldIdx);
+        if (!bld) return;
+        const bn = addNode(bx, by, 'building', reg.id, { building: bld, name: bld.name, dangerLevel: bld.infest * 0.08, buildingW: 1, buildingH: 1 });
+        connect(dr.id, bn.id); bP++;
+      });
+    });
+
+    // Dirt road POIs: forest clearings, campsites along trails
+    const dirtOnly = Object.values(nodes).filter(n => n.regionId === reg.id && n.type === 'dirt_road');
+    dirtOnly.forEach((dn, di) => {
+      if (di % 4 !== 2) return;
+      [[1,1],[-1,-1],[1,-1],[-1,1]].some(([px,py]) => {
+        const fx = dn.gx + px, fy = dn.gy + py;
+        if (nodes[nid(fx, fy)] || fx < ox || fx >= ox + rw || fy < oy || fy >= oy + rh) return false;
+        if (!rng.chance(40)) return false;
+        const poiType = rng.chance(60) ? 'forest_clearing' : 'park';
+        const pn = addNode(fx, fy, poiType, reg.id, { name: poiType === 'forest_clearing' ? 'Поляна' : 'Привал' });
+        connect(dn.id, pn.id);
+        return true;
+      });
+    });
+
+    // ── Unique named POIs (1-2 per region) ──
+    const _wildPOINames = {
+      wild_n: ['Заброшенная ферма','Охотничий домик','Старая мельница','Водонапорная башня'],
+      wild_s: ['Рыбацкая хижина','Затопленный лагерь','Болотная станция','Причал'],
+      wild_w: ['Лесничество','Заброшенная пилорама','Бункер','Грибное место'],
+      wild_e: ['Разрушенная заправка','Караван','Вышка связи','Заброшенная шахта'],
+    };
+    const poiNames = _wildPOINames[reg.id] || ['Заброшенное место'];
+    const regHWAll = Object.values(nodes).filter(n => n.regionId === reg.id && (n.type === 'highway' || n.type === 'dirt_road'));
+    for (let pi = 0; pi < 2 && regHWAll.length > 0; pi++) {
+      const origin = regHWAll[rng.int(0, regHWAll.length - 1)];
+      const name = poiNames[rng.int(0, poiNames.length - 1)];
+      // Place adjacent to road
+      const placed = [[0,-1],[0,1],[-1,0],[1,0]].some(([dx,dy]) => {
+        const px = origin.gx + dx, py = origin.gy + dy;
+        const existing = nodes[nid(px, py)];
+        if (!existing || existing.type !== 'deep_forest' && existing.type !== 'field') return false;
+        // Convert terrain node to named building
+        globalBldIdx++;
+        const bType = rng.pick(['cabin','ranger_station','garage']);
+        const bld = generateBuilding(bType, globalBldIdx);
+        if (!bld) return false;
+        bld.name = name;
+        existing.type = 'building'; existing.name = name;
+        existing.building = bld; existing.dangerLevel = bld.infest * 0.08;
+        existing.buildingW = 1; existing.buildingH = 1;
+        return true;
+      });
+    }
+
+    // ── Military checkpoint on highway (1 per region, 50% chance) ──
+    if (rng.chance(50)) {
+      const hwInReg = Object.values(nodes).filter(n => n.regionId === reg.id && n.type === 'highway');
+      if (hwInReg.length > 10) {
+        const cpNode = hwInReg[rng.int(Math.floor(hwInReg.length * 0.3), Math.floor(hwInReg.length * 0.7))];
+        // Place barricade adjacent to highway
+        [[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dy]) => {
+          const bx = cpNode.gx + dx, by = cpNode.gy + dy;
+          const existing = nodes[nid(bx, by)];
+          if (!existing || existing.blocked) return false;
+          if (existing.type === 'building') return false;
+          existing.type = 'barricade'; existing.name = 'Блокпост';
+          existing.blocked = true; existing.blockType = 'barricade';
+          existing.lootContainers = [
+            { name:'Ящик', icon:'□', searched:false, locked:null, loot:generateLootFromTable('military', rng.int(2,4)) },
+          ];
+          return true;
+        });
+      }
+    }
+
+    // ── Abandoned camp (1 per region, 40% chance) ──
+    if (rng.chance(40)) {
+      const clearings = Object.values(nodes).filter(n => n.regionId === reg.id && (n.type === 'forest_clearing' || n.type === 'park'));
+      if (clearings.length > 0) {
+        const camp = clearings[rng.int(0, clearings.length - 1)];
+        camp.name = rng.pick(['Заброшенный лагерь','Палаточный лагерь','Стоянка беженцев','Лагерь охотников']);
+        camp.lootContainers = [
+          { name:'Рюкзак', icon:'□', searched:false, locked:null, loot:generateLootFromTable('house', rng.int(1,3)) },
+          { name:'Костровище', icon:'○', searched:false, locked:null, loot:generateLootFromTable('street', rng.int(0,2)) },
+        ];
+      }
+    }
+
+    // ── Riparian terrain: swamp/field near rivers/lakes ──
+    Object.values(nodes).filter(n => n.regionId === reg.id && (n.type === 'river' || n.type === 'lake')).forEach(wn => {
+      [[0,-1],[0,1],[-1,0],[1,0],[1,1],[-1,-1]].forEach(([dx,dy]) => {
+        const adj = nodes[nid(wn.gx + dx, wn.gy + dy)];
+        if (adj && adj.type === 'deep_forest' && rng.chance(60)) {
+          adj.type = 'swamp'; adj.name = 'Заболоченный берег';
+        } else if (adj && adj.type === 'deep_forest' && rng.chance(30)) {
+          adj.type = 'field'; adj.name = 'Берег';
+        }
+      });
+    });
+  });
+
+  // ── INTER-CITY HIGHWAY: Ring road → Village ──
+  const villageReg = WORLD_CONFIG.regions.find(r => r.id === 'village');
+  if (villageReg) {
+    const vgx = villageReg.gx, vgy = villageReg.gy;
+    // Build highway from ring road corner (44,44) to village entrance
+    let hx = 44, hy = 44;
+    const endX = vgx + 10, endY = vgy + 5;
+    let prevId = null;
+    while (hx !== endX || hy !== endY) {
+      if (!nodes[nid(hx, hy)]) {
+        addNode(hx, hy, 'highway', 'wild_e', { name: 'Трасса' });
+      }
+      const curId = nid(hx, hy);
+      if (prevId && nodes[prevId] && nodes[curId]) connect(prevId, curId);
+      prevId = curId;
+      if (hx < endX) hx++;
+      else if (hx > endX) hx--;
+      if (hy < endY) hy++;
+      else if (hy > endY) hy--;
+    }
+    // Connect last highway node to any village road/ground within 8 cells
+    if (prevId) {
+      let bestD = 999, bestTid = null;
+      for (let dx = -8; dx <= 8; dx++) for (let dy = -8; dy <= 8; dy++) {
+        const tid = nid(endX + dx, endY + dy);
+        if (!nodes[tid]) continue;
+        if (nodes[tid].regionId === 'village' && !nodes[tid].blocked) {
+          const d = Math.abs(dx) + Math.abs(dy);
+          if (d < bestD) { bestD = d; bestTid = tid; }
+        }
+      }
+      if (bestTid) connect(prevId, bestTid);
+    }
+    // Connect start of highway to ring road (44,44 is already on ring)
+    const hwStart = nid(44, 44);
+    // Ring road node should already exist and be connected
+  }
+
+  // ── Farmland transition around village ──
+  if (villageReg) {
+    const vgx = villageReg.gx, vgy = villageReg.gy, vw = villageReg.w, vh = villageReg.h;
+    // Convert terrain in 3-cell ring around village to fields
+    for (let gx = vgx - 3; gx < vgx + vw + 3; gx++) {
+      for (let gy = vgy - 3; gy < vgy + vh + 3; gy++) {
+        if (gx >= vgx && gx < vgx + vw && gy >= vgy && gy < vgy + vh) continue; // skip village interior
+        const n = nodes[nid(gx, gy)];
+        if (n && (n.type === 'deep_forest' || n.type === 'swamp') && rng.chance(70)) {
+          n.type = 'field'; n.name = 'Поле';
+        }
+      }
+    }
+  }
+
+  // ── Upgrade highway gas stations to enterable buildings ──
+  Object.values(nodes).filter(n => n.type === 'gas_station' && n.regionId?.startsWith('wild')).forEach(gsn => {
+    globalBldIdx++;
+    const bld = generateBuilding('gas_station', globalBldIdx);
+    if (bld) {
+      gsn.type = 'building'; gsn.building = bld; gsn.name = bld.name;
+      gsn.buildingW = 1; gsn.buildingH = 1; gsn.dangerLevel = bld.infest * 0.08;
+    }
+  });
 
   // Store in G.world
   G.world.nodes = nodes;
@@ -1333,6 +1765,7 @@ function executeRouteStep() {
         if (itemId && ITEMS[itemId]) {
           addItem(itemId, 1);
           addLog(`Находишь на дороге: ${ITEMS[itemId].name}`, 'success');
+          if (typeof showLootAnimation === 'function') showLootAnimation(ITEMS[itemId].name);
         }
       }
     }
@@ -1444,6 +1877,7 @@ function discoverArea(startId, dist) {
     if (n.discovered) continue;
     if (Math.abs(n.gx - gx) <= dist && Math.abs(n.gy - gy) <= dist) {
       n.discovered = true;
+      n._discoveredAt = Date.now(); // for fade-in animation on map
     }
   }
 }
@@ -1708,6 +2142,14 @@ function advanceTime(hours = 1, isMinutes = false) {
     G.player.alive = true;
   }
   const totalMinutes = isMinutes ? hours : hours * 60;
+  // Snapshot for status summary on long time advances (2+ hours)
+  const _longAdvance = totalMinutes >= 120;
+  const _snap = _longAdvance ? {
+    hunger: G.player.moodles.hunger, thirst: G.player.moodles.thirst,
+    fatigue: G.player.moodles.fatigue, infection: G.player.moodles.infection || 0,
+    torso: G.player.hp.torso
+  } : null;
+
   G.time.minute = (G.time.minute || 0) + totalMinutes;
 
   while (G.time.minute >= 60) {
@@ -1740,7 +2182,7 @@ function advanceTime(hours = 1, isMinutes = false) {
       G.player.moodles.wetness = Math.min(100, G.player.moodles.wetness + 0.15 * (1 - pIns.waterResist / 100));
     } else {
       // Drying rate
-      const hasGenerator = false; // TODO: check ruin upgrades
+      const hasGenerator = _checkBaseUpgrade('generator');
       const dryRate = isOutdoor ? 0.05 : (hasGenerator ? 0.4 : 0.15);
       G.player.moodles.wetness = Math.max(0, G.player.moodles.wetness - dryRate);
     }
@@ -1797,7 +2239,8 @@ function advanceTime(hours = 1, isMinutes = false) {
 
   // Noise attraction — loud sounds draw zombies (check before decay)
   if (G.player.moodles.noise > 50) {
-    const attractChance = (G.player.moodles.noise - 50) * 0.4; // 0-20% at noise 50-100
+    const _noiseThreshold = 50 + (G.player.skills.stealth || 0) * 5; // stealth raises detection threshold
+    const attractChance = (G.player.moodles.noise - _noiseThreshold) * 0.4;
     if (rng.chance(attractChance) && typeof triggerRandomEncounter === 'function') {
       addLog('⚠ Шум привлёк внимание!', 'danger');
       triggerRandomEncounter();
@@ -1807,7 +2250,9 @@ function advanceTime(hours = 1, isMinutes = false) {
   // Noise decay — sound dissipates quickly (exponential decay)
   // Each game-minute noise drops by ~40% (stealth: ~55%)
   if (G.player.moodles.noise > 0) {
-    const decayFactor = G.player.stealthMode ? 0.45 : 0.60; // retain this fraction per minute
+    // Stealth skill improves noise decay: -3% retention per level
+    const _stSkill = G.player.skills.stealth || 0;
+    const decayFactor = (G.player.stealthMode ? 0.45 : 0.60) - _stSkill * 0.03; // retain this fraction per minute
     const decayPower = totalMinutes; // per actual minute elapsed
     G.player.moodles.noise *= Math.pow(decayFactor, decayPower);
     // Snap to zero below threshold to avoid lingering decimal dust
@@ -1828,10 +2273,28 @@ function advanceTime(hours = 1, isMinutes = false) {
   if (p.moodles.hunger > 80) debuffs.push({ name:'Голод', icon:'🍽', effect:'HP -1/мин, скорость -20%' });
   if (p.moodles.thirst > 80) debuffs.push({ name:'Жажда', icon:'💧', effect:'HP -2/мин, обморок' });
   if (p.moodles.pain > 60) debuffs.push({ name:'Боль', icon:'💢', effect:'точность -20, скорость -15%' });
-  if (p.moodles.infection > 40) debuffs.push({ name:'Инфекция', icon:'🦠', effect:'HP -1/мин, жар' });
+  if (p.moodles.infection > 75) debuffs.push({ name:'Инфекция: критич.', icon:'🦠', effect:'HP −3/ч, боль, жар' });
+  else if (p.moodles.infection > 50) debuffs.push({ name:'Инфекция: средняя', icon:'🦠', effect:'боль, усталость, жар' });
+  else if (p.moodles.infection > 20) debuffs.push({ name:'Инфекция: лёгкая', icon:'🦠', effect:'жар, усталость' });
   if (p.moodles.bodyTemp < 34) debuffs.push({ name:'Гипотермия', icon:'🥶', effect:'скорость -40%, тремор' });
   if (p.moodles.bodyTemp > 39) debuffs.push({ name:'Жар', icon:'🤒', effect:'жажда +100%, усталость +50%' });
   G._activeDebuffs = debuffs;
+
+  // Status summary for long time advances
+  if (_snap && G.player.alive) {
+    const warns = [];
+    const hDiff = Math.round(G.player.moodles.hunger - _snap.hunger);
+    const tDiff = Math.round(G.player.moodles.thirst - _snap.thirst);
+    if (hDiff > 10) warns.push(`голод +${hDiff}`);
+    if (tDiff > 10) warns.push(`жажда +${tDiff}`);
+    if (G.player.moodles.hunger >= 80 && _snap.hunger < 80) warns.push('⚠ Голодание!');
+    if (G.player.moodles.thirst >= 80 && _snap.thirst < 80) warns.push('⚠ Обезвоживание!');
+    const infDiff = Math.round((G.player.moodles.infection || 0) - _snap.infection);
+    if (infDiff > 0) warns.push(`инфекция +${infDiff}`);
+    const hpDiff = Math.round(G.player.hp.torso - _snap.torso);
+    if (hpDiff < -5) warns.push(`HP торса ${hpDiff}`);
+    if (warns.length) addLog(`Итог: ${warns.join(', ')}`, 'warning');
+  }
 
   updateUI();
 }
@@ -1930,15 +2393,44 @@ function advanceHourTick() {
 
   // Bleeding & infection
   if (G.player.moodles.bleeding > 0) {
+    const _bleedLvl = G.player.moodles.bleeding; // 1=light, 2=moderate, 3=heavy
     const parts = Object.keys(G.player.hp);
     const part = parts[Math.floor(rng.next() * parts.length)];
-    G.player.hp[part] = Math.max(0, G.player.hp[part] - 3); // increased bleeding damage
-    G.player.hp.torso = Math.max(0, G.player.hp.torso - 1); // torso also loses from blood loss
+    const _bleedDmg = _bleedLvl >= 3 ? 5 : _bleedLvl >= 2 ? 3 : 1;
+    G.player.hp[part] = Math.max(0, G.player.hp[part] - _bleedDmg);
+    if (_bleedLvl >= 2) G.player.hp.torso = Math.max(0, G.player.hp.torso - 1); // blood loss at moderate+
+    // Light bleeding has 20% chance to stop naturally each hour
+    if (_bleedLvl === 1 && rng.chance(20)) {
+      G.player.moodles.bleeding = 0;
+      addLog('Лёгкое кровотечение остановилось.', 'info');
+    }
     if(G?._dayStats) G._dayStats.wasHurt=true;
   }
-  if (G.player.moodles.infection > 75) {
-    G.player.hp.torso = Math.max(0, G.player.hp.torso - 3);
-    if(G?._dayStats) G._dayStats.wasHurt=true;
+  // Infection stages: gradual progression with escalating effects
+  const _inf = G.player.moodles.infection || 0;
+  if (_inf > 0) {
+    // Natural infection growth: untreated infection slowly worsens (+0.3/hr)
+    if (_inf > 20 && _inf < 100) G.player.moodles.infection = Math.min(100, _inf + 0.3);
+    // Stage 1 (20-50): fever, mild fatigue
+    if (_inf > 20) {
+      G.player.moodles.fatigue = Math.min(100, G.player.moodles.fatigue + 0.5);
+    }
+    // Stage 2 (50-75): pain, weakness, body temp rises
+    if (_inf > 50) {
+      G.player.moodles.pain = Math.min(100, G.player.moodles.pain + 0.3);
+      G.player.moodles.fatigue = Math.min(100, G.player.moodles.fatigue + 0.5);
+    }
+    // Stage 3 (75+): HP damage, critical
+    if (_inf > 75) {
+      G.player.hp.torso = Math.max(0, G.player.hp.torso - 3);
+      G.player.moodles.pain = Math.min(100, G.player.moodles.pain + 1);
+      if(G?._dayStats) G._dayStats.wasHurt=true;
+    }
+    // Stage 4 (90+): rapid deterioration
+    if (_inf > 90) {
+      G.player.hp.torso = Math.max(0, G.player.hp.torso - 3);
+      Object.keys(G.player.hp).forEach(k => G.player.hp[k] = Math.max(0, G.player.hp[k] - 1));
+    }
   }
 
   // Starvation / dehydration damage
@@ -1949,6 +2441,21 @@ function advanceHourTick() {
   if (G.player.moodles.thirst >= 95) {
     G.player.hp.torso = Math.max(0, G.player.hp.torso - 3);
     if (G.player.moodles.thirst >= 100) G.player.hp.torso = Math.max(0, G.player.hp.torso - 5);
+  }
+
+  // Passive wound healing: slow natural recovery when stable
+  const _canHeal = G.player.moodles.bleeding <= 0 && G.player.moodles.hunger < 80 && G.player.moodles.thirst < 80 && (G.player.moodles.infection || 0) < 50;
+  if (_canHeal) {
+    const faHealBonus = 1 + (G.player.skills.firstAid || 0) * 0.15;
+    // Resting bonus: 3x heal if fatigue < 30 (well rested / sleeping)
+    const restBonus = G.player.moodles.fatigue < 30 ? 3 : G.player.moodles.fatigue < 60 ? 1.5 : 1;
+    const healRate = 0.5 * faHealBonus * restBonus; // ~0.5 HP/hr base, up to ~2.6/hr rested+skilled
+    Object.keys(G.player.hp).forEach(part => {
+      const maxHp = part === 'torso' ? 100 : part === 'head' ? 80 : 60;
+      if (G.player.hp[part] < maxHp) {
+        G.player.hp[part] = Math.min(maxHp, G.player.hp[part] + healRate);
+      }
+    });
   }
 
   // Death check after bleeding/infection/starvation (bug fix)
@@ -2030,16 +2537,45 @@ function getTimeString() {
 function getNightMod() {
   const p = getTimePeriod();
   const hasTorch = G && G.player && hasItem('torch');
-  if (p === 'night') return G.difficulty.nightPenalty * 100 * (hasTorch ? 0.5 : 1);
-  if (p === 'dusk') return G.difficulty.nightPenalty * 50 * (hasTorch ? 0.7 : 1);
+  const hasFlash = G && G.player && (countItem('flashlight') > 0);
+  const hasLight = hasFlash || hasTorch;
+  // Flashlight is better than torch: 70% reduction vs 50%
+  const lightMult = hasFlash ? 0.3 : hasTorch ? 0.5 : 1;
+  if (p === 'night') return G.difficulty.nightPenalty * 100 * lightMult;
+  if (p === 'dusk') return G.difficulty.nightPenalty * 50 * (hasLight ? 0.5 : 1);
   return 0;
 }
 
 // ── PLAYER HELPERS ──
+// Check if player's home base has a specific upgrade installed
+function _checkBaseUpgrade(upgradeId) {
+  if (!G?.world?.homeBase) return false;
+  const nodes = G.world.nodes;
+  for (const nid in nodes) {
+    const n = nodes[nid];
+    if (n.building?.id === G.world.homeBase && n.building.isRuin && n.building.ruin?.upgrades) {
+      return n.building.ruin.upgrades.includes(upgradeId);
+    }
+  }
+  return false;
+}
+
 function calcWeight() {
+  const prevWeight = G.player.weight || 0;
   let w = 0;
   G.player.inventory.forEach(it => { w += (ITEMS[it.id]?.weight || 0) * it.qty; });
   G.player.weight = Math.round(w * 10) / 10;
+  // Warn when crossing encumbrance thresholds
+  const mw = maxWeight();
+  if (mw > 0) {
+    const prevRatio = prevWeight / mw;
+    const newRatio = G.player.weight / mw;
+    if (prevRatio < 0.75 && newRatio >= 0.75 && newRatio < 1) {
+      addLog('Рюкзак тяжелеет — скорость снижается.', 'warning');
+    } else if (prevRatio < 1 && newRatio >= 1) {
+      addLog('⚠ Перегруз! Движение сильно замедлено.', 'danger');
+    }
+  }
 }
 
 function maxWeight() {
@@ -2069,11 +2605,28 @@ function getArmor() {
     const id = eq[slot];
     if (id && ITEMS[id]) armor += Math.floor((ITEMS[id].armor || 0) * 0.25);
   }
+  // Crafted armor patches bonus
+  if (G.player._armorBonus) {
+    for (const slot of [...fullArmorSlots, ...partialSlots]) {
+      const id = eq[slot];
+      if (id && G.player._armorBonus[id]) armor += G.player._armorBonus[id];
+    }
+  }
   return armor;
 }
 
 function isEncumbered() {
   return G.player.weight > maxWeight();
+}
+
+// Gradual encumbrance: 0 at <=75%, ramps 0→1 from 75%→100%, 1 when over max
+function encumbranceLevel() {
+  const mw = maxWeight();
+  if (mw <= 0) return 1;
+  const ratio = G.player.weight / mw;
+  if (ratio <= 0.75) return 0;
+  if (ratio >= 1) return 1;
+  return (ratio - 0.75) / 0.25; // 0..1 linear ramp
 }
 
 // Active debuff multipliers
@@ -2086,25 +2639,45 @@ function getDebuffMult(type) {
       if (p.moodles.depression > 60) sm *= 1.5;
       if (p.moodles.fatigue > 80) sm *= 1.3;
       if (p.moodles.pain > 60) sm *= 1.2;
-      return sm;
+      // Wet hands slow down searching
+      if ((p.moodles.wetness || 0) > 60) sm *= 1.15;
+      // Night penalty to search without light
+      const _period = typeof getTimePeriod === 'function' ? getTimePeriod() : 'day';
+      if (_period === 'night' || _period === 'dusk') {
+        const _hasLight = hasItem('flashlight') || hasItem('torch');
+        if (!_hasLight) sm *= 1.4; // 40% slower without light at night
+        else sm *= 0.95; // slight bonus with light (focused search)
+      }
+      // Scouting skill: -8% search time per level (up to -40%)
+      sm *= 1 - (p.skills.scouting || 0) * 0.08;
+      return Math.max(0.4, sm); // cap at 60% reduction
     case 'accuracy': // subtracted from hit chance
       let acc = 0;
       if (p.moodles.pain > 60) acc += 20;
       if (p.moodles.fatigue > 80) acc += 15;
       if (p.moodles.bodyTemp < 34) acc += 15;
-      if (isEncumbered()) acc += 10;
+      acc += Math.round(encumbranceLevel() * 15); // gradual: 0→15
       return acc;
     case 'moveSpeed': // 0..1, lower = slower
       let ms = 1;
-      if (isEncumbered()) ms *= 0.6;
+      const enc = encumbranceLevel();
+      if (enc > 0) ms *= 1 - enc * 0.4; // gradual: 1→0.6
       if (p.moodles.pain > 60) ms *= 0.8;
       if (p.moodles.fatigue > 80) ms *= 0.7;
       if (p.moodles.bodyTemp < 34) ms *= 0.6;
       if (p.hp.legL < 30 || p.hp.legR < 30) ms *= 0.5;
+      // Weather: storm/heavy rain slows outdoor movement
+      if (G?.weather) {
+        const w = G.weather;
+        if (w === 'storm') ms *= 0.7;
+        else if (w === 'rain') ms *= 0.85;
+        else if (w === 'snow') ms *= 0.8;
+      }
       return ms;
     case 'noise': // multiplier for noise generation
       let nm = 1;
-      if (isEncumbered()) nm *= 1.5;
+      const encN = encumbranceLevel();
+      if (encN > 0) nm *= 1 + encN * 0.5; // gradual: 1→1.5
       if (p.moodles.fatigue > 80) nm *= 1.3;
       return nm;
     default: return 1;
@@ -2134,13 +2707,30 @@ function getMoodleModifier() {
   if (m.panic >= 70) mod -= 25;
   else if (m.panic >= 45) mod -= 15;
 
-  if (isEncumbered()) mod -= 30;
+  mod -= Math.round(encumbranceLevel() * 30); // gradual: 0→-30
   return mod;
 }
 
 function addNoise(amount) {
   const mult = typeof getDebuffMult === 'function' ? getDebuffMult('noise') : 1;
-  G.player.moodles.noise = Math.min(100, G.player.moodles.noise + Math.round(amount * mult));
+  const noiseAdded = Math.round(amount * mult);
+  G.player.moodles.noise = Math.min(100, G.player.moodles.noise + noiseAdded);
+  // Indoor noise attraction — loud actions can attract zombies from adjacent rooms
+  if (G.world.currentRoom >= 0 && noiseAdded >= 10) {
+    const room = currentRoom();
+    if (room && !room.zombies && !G.combatState) {
+      const loc = currentLocation();
+      const infest = loc?.infest || 2;
+      // Chance scales with noise: 10 noise = 5%, 20 noise = 15%, 30+ = 25%
+      const attractChance = Math.min(25, noiseAdded * 1.5 - 10);
+      if (rng.chance(attractChance)) {
+        addLog('⚠ Шум привлёк внимание! Зомби ворвался в помещение!', 'danger');
+        const zombie = spawnZombie(infest);
+        room.zombies = zombie;
+        startCombat(zombie, room);
+      }
+    }
+  }
 }
 
 function getTotalHp() {
@@ -2153,13 +2743,19 @@ function addSkillXp(skill, amount) {
   const gained = Math.round(amount * xpMult);
   G.player.skillXp[skill] = (G.player.skillXp[skill] || 0) + gained;
   if (typeof showXpGain === 'function') showXpGain(skill, gained, getSkillName(skill));
-  const threshold = (G.player.skills[skill] + 1) * 30;
+  const threshold = getSkillThreshold(G.player.skills[skill]);
   if (G.player.skillXp[skill] >= threshold && G.player.skills[skill] < 5) {
     G.player.skills[skill]++;
     G.player.skillXp[skill] = 0;
     addLog(`▲ Навык "${getSkillName(skill)}" повышен до ${G.player.skills[skill]}!`, 'success');
     if (typeof showSkillLevelUp === 'function') showSkillLevelUp(getSkillName(skill), G.player.skills[skill], skill);
   }
+}
+
+// Progressive XP thresholds: 30, 70, 120, 180, 250
+function getSkillThreshold(level) {
+  const thresholds = [30, 70, 120, 180, 250];
+  return thresholds[level] || 250;
 }
 
 function getSkillName(s) {
@@ -2328,7 +2924,60 @@ function doAction(action) {
     case 'base': doBase(); break;
     case 'scout': doScout(); break;
     case 'save': saveGame(); addLog('Игра сохранена.', 'info'); break;
+    case 'settings': showInGameSettings(); break;
   }
+}
+
+function showInGameSettings() {
+  let html = '';
+
+  // Audio
+  html += '<div style="color:var(--cyan);font-size:9px;letter-spacing:.1em;margin-bottom:6px;padding-bottom:3px;border-bottom:1px solid rgba(0,229,255,.15)">ЗВУК</div>';
+  html += _settingSlider('masterVol', 'Громкость', 0, 100, '%');
+  html += _settingSlider('sfxVol', 'Эффекты', 0, 100, '%');
+
+  // Graphics
+  html += '<div style="color:var(--cyan);font-size:9px;letter-spacing:.1em;margin:10px 0 6px;padding-bottom:3px;border-bottom:1px solid rgba(0,229,255,.15)">ГРАФИКА</div>';
+  html += _settingToggle('scanlines', 'Скан-линии');
+  html += _settingToggle('particles', 'Частицы');
+  html += _settingToggle('screenShake', 'Тряска экрана');
+  html += _settingToggle('bloodEffects', 'Кровь');
+  html += _settingToggle('nightFilter', 'Ночной фильтр');
+  html += _settingSlider('brightness', 'Яркость', 50, 150, '%');
+
+  // Gameplay
+  html += '<div style="color:var(--cyan);font-size:9px;letter-spacing:.1em;margin:10px 0 6px;padding-bottom:3px;border-bottom:1px solid rgba(0,229,255,.15)">ИГРА</div>';
+  html += _settingToggle('autoSave', 'Автосохранение');
+  html += _settingToggle('confirmDrop', 'Подтвер. выброса');
+  html += _settingToggle('tooltips', 'Подсказки');
+  html += _settingToggle('showFps', 'Показать FPS');
+
+  // Theme
+  html += '<div style="color:var(--cyan);font-size:9px;letter-spacing:.1em;margin:10px 0 6px;padding-bottom:3px;border-bottom:1px solid rgba(0,229,255,.15)">ТЕМА</div>';
+  html += '<div style="display:flex;gap:6px;margin-bottom:8px">';
+  ['green','amber','blue','red'].forEach(c => {
+    const cols = {green:'#00ff41',amber:'#ffb000',blue:'#00b4ff',red:'#ff2244'};
+    html += `<div onclick="applyTheme('${c}');showInGameSettings()" style="width:28px;height:28px;background:${cols[c]};border-radius:4px;cursor:pointer;border:2px solid ${settings.colorTheme===c?'#fff':'transparent'}"></div>`;
+  });
+  html += '</div>';
+
+  openModal('⚙ Настройки', html);
+}
+
+function _settingSlider(key, label, min, max, unit) {
+  return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+    <span style="flex:0 0 90px;font-size:10px;color:var(--text-dim)">${label}</span>
+    <input type="range" min="${min}" max="${max}" value="${settings[key]}" oninput="settings['${key}']=+this.value;saveSettings();this.nextSibling.textContent=this.value+'${unit}'" style="flex:1;accent-color:var(--green)">
+    <span style="font-size:9px;color:var(--green);min-width:30px">${settings[key]}${unit}</span>
+  </div>`;
+}
+
+function _settingToggle(key, label) {
+  const on = settings[key];
+  return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;cursor:pointer" onclick="settings['${key}']=!settings['${key}'];saveSettings();showInGameSettings()">
+    <span style="font-size:10px;color:var(--text-dim)">${label}</span>
+    <span style="font-size:12px;color:${on ? 'var(--green)' : 'var(--red)'}">${on ? '● ВКЛ' : '○ ВЫКЛ'}</span>
+  </div>`;
 }
 
 // ── LOCKPICKING ──
@@ -2536,6 +3185,7 @@ function crowbarSuccess() {
 
   // XP
   addSkillXp('lockpicking', 5 + G._crowbar.difficulty * 3);
+  G.stats.locksPicked = (G.stats.locksPicked || 0) + 1;
 
   // Crowbar durability
   const inv = G.player.inventory;
@@ -2596,7 +3246,8 @@ function startLockpickMinigame(difficulty, targetName) {
 
   // Sweet spot: random angle, size decreases with difficulty
   const sweetSpotAngle = Math.random() * 360;
-  const sweetSpotSize = Math.max(8, 40 - difficulty * 6); // degrees of tolerance
+  const playerLockSkill = G.player.skills.lockpicking || 0;
+  const sweetSpotSize = Math.max(8, (40 - difficulty * 6) * (1 + playerLockSkill * 0.1)); // skill makes sweet spot up to 50% larger at lvl5
 
   const html = `<div style="text-align:center">
     <div style="color:var(--text-dim);font-size:11px;margin-bottom:6px">Поверни отмычку, найди правильное положение, затем поверни замок</div>
@@ -2658,7 +3309,7 @@ function startLockpickMinigame(difficulty, targetName) {
           lp.turnAngle += dt * 60;
         }
         // Damage pick
-        const dmgRate = 15 + difficulty * 8 + angleDiff * 0.3;
+        const dmgRate = (15 + difficulty * 8 + angleDiff * 0.3) / (1 + playerLockSkill * 0.08);
         lp.pickHp -= dt * dmgRate;
         lp.shakeOffset = (Math.random() - 0.5) * 3;
 
@@ -2800,9 +3451,11 @@ function lockpickSuccess() {
 
   // XP reward
   addSkillXp('lockpicking', 8 + G._lockpick.difficulty * 5);
+  G.stats.locksPicked = (G.stats.locksPicked || 0) + 1;
   // No noise from lockpick!
 
   addLog(`Замок вскрыт отмычкой! (тихо)`, 'success');
+  if (typeof showStatusFloat === 'function') showStatusFloat('🔓 Замок вскрыт!', '#44ff88');
   playSound('craft');
   closeModal();
 
@@ -3056,6 +3709,21 @@ function searchContainer(ci) {
         }
       });
 
+      // Scouting bonus: chance to find extra item (5% per level)
+      const _scoutLvl = G.player.skills.scouting || 0;
+      if (_scoutLvl >= 2 && rng.chance(_scoutLvl * 5)) {
+        const loc = currentLocation();
+        const table = LOOT_TABLES[loc?.type || 'house'] || LOOT_TABLES.house;
+        const _bonusRoll = rng.next();
+        const _bonusPool = _bonusRoll < 0.2 ? (table.rare || table.uncommon || table.common) : _bonusRoll < 0.5 ? (table.uncommon || table.common) : table.common;
+        const _bonusId = rng.pick(_bonusPool);
+        if (_bonusId && ITEMS[_bonusId]) {
+          cont.loot.push({ id:_bonusId, qty:1, durability:ITEMS[_bonusId].dur||0, freshDays:ITEMS[_bonusId].freshness||999 });
+          addLog(`Внимательный обыск! Нашёл ещё: ${ITEMS[_bonusId].name}`, 'success');
+          if (typeof showStatusFloat === 'function') showStatusFloat(`🔍 Бонус: ${ITEMS[_bonusId].name}`, '#00ccff');
+        }
+      }
+
       const lootCount = cont.loot.filter(l => l.id !== 'note').length;
       addLog(`${cont.name}: найдено ${lootCount} предм.`, lootCount > 0 ? 'success' : 'warning');
       showLootPicker(room, ci, true);
@@ -3242,6 +3910,15 @@ function takeAllFromContainer(containerIdx) {
   }
   if (itemCount === 0) { showContainerList(room, true); return; }
 
+  // Weight check: warn if taking all would overload
+  let _totalNewWeight = 0;
+  const _lootItems = containerIdx >= 0 ? (room.containers?.[containerIdx]?.loot || []) : (room.floor || []);
+  _lootItems.forEach(it => { if (it.id !== 'note') _totalNewWeight += (ITEMS[it.id]?.weight || 0) * (it.qty || 1); });
+  const _afterWeight = G.player.weight + _totalNewWeight;
+  if (_afterWeight > maxWeight()) {
+    addLog(`⚠ Всё не поместится! (+${_totalNewWeight.toFixed(1)} кг → ${_afterWeight.toFixed(1)}/${maxWeight()} кг)`, 'warning');
+  }
+
   startTimedAction(`Забираю всё (${itemCount} предм.)`, Math.min(itemCount, 5), () => {
     let allItems = [];
     if (containerIdx >= 0 && room.containers && room.containers[containerIdx]) {
@@ -3257,6 +3934,19 @@ function takeAllFromContainer(containerIdx) {
         addItem(item.id, item.qty || 1, { durability: item.durability, freshDays: item.freshDays, loadedAmmo: item.loadedAmmo, insertedMag: item.insertedMag });
       });
       room.floor = [];
+    }
+    // Staggered loot floats
+    if (typeof showLootAnimation === 'function') {
+      allItems.forEach((item, i) => {
+        if (i < 6) { // limit to 6 floats to avoid clutter
+          const name = ITEMS[item.id]?.name || item.id;
+          const y = window.innerHeight / 2 - i * 18;
+          setTimeout(() => showLootAnimation(name, window.innerWidth / 2 + (Math.random() - 0.5) * 40, y), i * 120);
+        }
+      });
+      if (allItems.length > 6) {
+        setTimeout(() => showLootAnimation(`...и ещё ${allItems.length - 6}`, window.innerWidth / 2, window.innerHeight / 2 - 6 * 18), 720);
+      }
     }
     // Mark all as taken (anti-dupe)
     allItems.forEach(item => { item._taken = true; });
@@ -3417,7 +4107,8 @@ function enterRoom(idx) {
   G.world.currentRoom = idx;
   if (!room) { G.world.currentRoom = prevRoom; return; }
   closeModal();
-  const noiseAdd = G.player.stealthMode ? 1 : 3;
+  const _stealthSkill = G.player.skills.stealth || 0;
+  const noiseAdd = G.player.stealthMode ? Math.max(0, 1 - _stealthSkill * 0.1) : Math.max(1, 3 - _stealthSkill * 0.3);
   addNoise(noiseAdd);
   addLog(`Входишь в: ${room.name}`, 'info');
   playSound('door');
@@ -3516,13 +4207,19 @@ function travelTo(locIdx) {
   const loc = currentRegion().locations[locIdx];
   const dist = loc.distance;
   const legPenalty = (G.player.hp.legL < 50 ? 1 : 0) + (G.player.hp.legR < 50 ? 1 : 0);
-  const totalTime = dist + legPenalty;
+  // Bad weather slows travel
+  const _weatherPenalty = G.weather === 'storm' ? 1 : G.weather === 'snow' ? 1 : 0;
+  const totalTime = dist + legPenalty + _weatherPenalty;
 
+  if (_weatherPenalty > 0) addLog(`Непогода замедляет путь (+${_weatherPenalty} ч).`, 'warning');
   addLog(`Отправляешься в ${loc.name}... (${totalTime} ч)`, 'info');
 
   // Random encounters during travel
   for (let h = 0; h < totalTime; h++) {
-    const encounterChance = currentRegion().riskBase + G.player.moodles.noise * 0.1 + getNightMod();
+    const stealthReduce = (G.player.skills.stealth || 0) * 3 + (G.player.stealthMode ? 10 : 0);
+    // Rain/storm: rain masks noise (-5), but storm makes travel more dangerous (+5)
+    const _weatherMod = G.weather === 'rain' ? -5 : G.weather === 'storm' ? 5 : 0;
+    const encounterChance = Math.max(5, currentRegion().riskBase + G.player.moodles.noise * 0.1 + getNightMod() - stealthReduce + _weatherMod);
     if (rng.chance(encounterChance)) {
       const zombie = spawnZombie(loc.infest);
       addLog(`По пути встречаешь ${zombie.name}!`, 'danger');
@@ -3538,6 +4235,7 @@ function travelTo(locIdx) {
       const itemId = rng.pick(streetLoot.common);
       addItem(itemId, 1);
       addLog(`Находишь на дороге: ${ITEMS[itemId].name}`, 'success');
+      if (typeof showLootAnimation === 'function') showLootAnimation(ITEMS[itemId].name);
     }
   }
 
@@ -3579,7 +4277,8 @@ function travelRegion(ri) {
   addLog(`Переход в регион: ${reg.name}... (${travelTime} ч)`, 'info');
 
   for (let h = 0; h < travelTime; h++) {
-    if (rng.chance(reg.riskBase + G.player.moodles.noise * 0.1 + getNightMod())) {
+    const _stR = (G.player.skills.stealth || 0) * 3 + (G.player.stealthMode ? 10 : 0);
+    if (rng.chance(Math.max(5, reg.riskBase + G.player.moodles.noise * 0.1 + getNightMod() - _stR))) {
       const zombie = spawnZombie(3);
       addLog(`Встреча на переходе: ${zombie.name}!`, 'danger');
       advanceTime(1);
@@ -3618,6 +4317,10 @@ function travelRegion(ri) {
 
 // ── COMBAT ──
 function startCombat(zombie, room) {
+  // Reset kill streak if >30s since last kill
+  if (G.stats._lastKillTime && Date.now() - G.stats._lastKillTime > 30000) {
+    G.stats._killStreak = 0;
+  }
   Bus.emit('combat:start', { nodeId: G.world.currentNodeId, roomIdx: G.world.currentRoom });
   // Cancel following when entering combat
   if (typeof _followTarget !== 'undefined' && _followTarget) { if (typeof stopFollow === 'function') stopFollow(); }
@@ -3844,7 +4547,9 @@ function showCombatUI() {
   const isMP = typeof Net !== 'undefined' && Net.mode !== 'OFFLINE';
 
   // Weapon cooldown based on type (ms)
-  const weaponCd = w.subtype === 'firearm' ? 2000 : w.subtype === 'melee' ? (w.dmg > 20 ? 1800 : 1200) : 1000;
+  const _adrenalineActive = G.player._adrenaline && Date.now() < G.player._adrenaline;
+  const _adrMult = _adrenalineActive ? 0.7 : 1; // 30% faster attacks
+  const weaponCd = Math.round((w.subtype === 'firearm' ? 2000 : w.subtype === 'melee' ? (w.dmg > 20 ? 1800 : 1200) : 1000) * _adrMult);
   if (!G.combatState._weaponCd) G.combatState._weaponCd = weaponCd;
   if (!G.combatState._participants) G.combatState._participants = [{ id: typeof Net !== 'undefined' ? Net.localId : 'local', name: G.characterName, totalDmg: 0 }];
   if (!G.combatState._blocking) G.combatState._blocking = false;
@@ -3876,11 +4581,32 @@ function showCombatUI() {
     html += `</div>`;
   }
 
+  // ── Player Status Bar ──
+  const _pHp = getTotalHp();
+  const _pHpColor = _pHp > 60 ? 'var(--green)' : _pHp > 30 ? 'var(--yellow)' : 'var(--red)';
+  html += `<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;padding:3px 6px;background:rgba(0,255,65,.03);border-radius:3px">`;
+  html += `<div style="flex:1"><div style="height:5px;background:rgba(0,255,65,.1);border-radius:3px;overflow:hidden"><div style="height:100%;width:${_pHp}%;background:${_pHpColor};border-radius:3px"></div></div></div>`;
+  html += `<span style="font-size:9px;color:${_pHpColor};min-width:28px">${_pHp}%</span>`;
+  // Bleeding indicator
+  if (G.player.moodles.bleeding > 0) html += `<span style="font-size:9px;color:var(--red)">🩸${G.player.moodles.bleeding}</span>`;
+  // Pain indicator
+  if (G.player.moodles.pain > 40) html += `<span style="font-size:9px;color:#ff8800">💢</span>`;
+  // Adrenaline active indicator
+  if (G.player._adrenaline && Date.now() < G.player._adrenaline) html += `<span style="font-size:9px;color:#ff4444;animation:pulse 1s infinite">💉</span>`;
+  html += `</div>`;
+
   // ── My Weapon ──
   let weaponLabel = `${w.name} (${w.dmg})`;
   if (w.subtype === 'firearm' && invItem) {
     const ammoInfo = getWeaponAmmoInfo(invItem);
     weaponLabel += ` · ${ammoInfo.loaded}/${ammoInfo.max}`;
+    if (ammoInfo.loaded <= 1 && ammoInfo.loaded > 0) weaponLabel += ' ⚠';
+    if (ammoInfo.loaded === 0) weaponLabel += ' ✕ ПУСТО';
+  }
+  // Weapon durability warning in combat
+  if (invItem && ITEMS[w.id]?.dur) {
+    const _dPct = Math.round(invItem.durability / ITEMS[w.id].dur * 100);
+    if (_dPct <= 25) weaponLabel += ` · <span style="color:var(--red)">${_dPct}%</span>`;
   }
   html += `<div style="font-size:9px;color:var(--text-dim);text-align:center;margin-bottom:4px">${itemIconHtml(G.player.equipped,16)} ${weaponLabel}</div>`;
 
@@ -3988,11 +4714,18 @@ function _showCombatHitEffect() {
 function combatBlock() {
   if (!G.combatState) return;
   if (Date.now() < (G.combatState._blockCdUntil || 0)) return;
+  // Fatigue cost for blocking
+  if (G.player.moodles.fatigue >= 90) {
+    addLog('Слишком устал для блока!', 'warning');
+    return;
+  }
+  G.player.moodles.fatigue = Math.min(100, G.player.moodles.fatigue + 3);
   G.combatState._blocking = true;
-  G.combatState._blockCdUntil = Date.now() + 7000; // 5s block + 2s cooldown
+  G.combatState._blockCdUntil = Date.now() + 7000; // 2s block + 5s cooldown
   if (!G.combatState._log) G.combatState._log = [];
   G.combatState._log.push('🛡 Вы приготовились к защите! (−50% урона, 2с)');
   addLog('🛡 Защита! Урон снижен на 50% на 2 секунды.', 'info');
+  if (typeof showStatusFloat === 'function') showStatusFloat('🛡 БЛОК!', '#00ccff');
   // Block expires after 2 seconds
   setTimeout(() => { if (G.combatState) G.combatState._blocking = false; showCombatUI(); }, 2000);
   showCombatUI();
@@ -4004,6 +4737,12 @@ function combatAttack() {
   const now = Date.now();
   if (G.combatState._lastAttack && now - G.combatState._lastAttack < cd) return;
   G.combatState._lastAttack = now;
+
+  // Stagger check — can't attack while staggered
+  if (G.combatState._staggerUntil && now < G.combatState._staggerUntil) {
+    addLog('Вы оглушены!', 'warning');
+    return;
+  }
 
   Bus.emit('combat:action', { action: 'attack' });
   const z = G.combatState.zombie;
@@ -4044,12 +4783,28 @@ function combatAttack() {
   const bt2 = p.moodles.bodyTemp || 36.6;
   const tempAccPenalty = bt2 < 33 ? 15 : bt2 < 35 ? 8 : bt2 > 40 ? 10 : 0;
   const debuffAccPenalty = typeof getDebuffMult === 'function' ? getDebuffMult('accuracy') : 0;
-  const finalHit = Math.min(95, Math.max(15, 60 + hitChance - panicMiss - tempAccPenalty - debuffAccPenalty));
+  // Worn weapon accuracy penalty: below 25% durability, up to -15% hit
+  const _wDurRatio = (invItem && w.id !== 'fist') ? (invItem.durability / (ITEMS[w.id]?.dur || 100)) : 1;
+  const durAccPenalty = _wDurRatio < 0.25 ? Math.round((1 - _wDurRatio / 0.25) * 15) : 0;
+  const finalHit = Math.min(95, Math.max(15, 60 + hitChance - panicMiss - tempAccPenalty - debuffAccPenalty - durAccPenalty));
 
   if (rng.chance(finalHit)) {
+    // Zombie-type special: Runner dodge (20% chance to evade melee)
+    if (z.speed >= 3 && !isFirearm && rng.chance(20)) {
+      addLog(`${z.name} увернулся от удара!`, 'warning');
+      if (typeof showStatusFloat === 'function') showStatusFloat('УКЛОНЕНИЕ!', '#ffcc00');
+      if (G.combatState?._log) G.combatState._log.push(`${z.name} увернулся!`);
+      playSound('miss');
+      showCombatUI();
+      return;
+    }
+
     const skillMult = isFirearm ? (1 + (p.skills.firearms || 0) * 0.08) : (1 + p.skills.strength * 0.05);
     const meleeMult = !isFirearm ? (m.meleeDmgMult || 1) : 1;
-    let dmg = w.dmg * skillMult * meleeMult * (0.85 + rng.next() * 0.3);
+    // Weapon condition penalty: below 30% durability, damage drops up to -40%
+    const wDur = (invItem && w.id !== 'fist') ? (invItem.durability / (ITEMS[w.id]?.dur || 100)) : 1;
+    const durMult = wDur > 0.3 ? 1 : 0.6 + wDur * (0.4 / 0.3); // 1.0 above 30%, ramps 0.6→1.0
+    let dmg = w.dmg * skillMult * meleeMult * durMult * (0.85 + rng.next() * 0.3);
     if (z.armor) dmg *= (1 - z.armor);
     // Critical hit (15% base + stealth bonus)
     const critChance = 15 + (p.stealthMode ? 15 : 0);
@@ -4120,6 +4875,23 @@ function combatAttack() {
       }
     }
     addSkillXp(isFirearm ? 'firearms' : 'strength', 8);
+
+    // Zombie-type specials after hit:
+    // Fat zombie: 25% chance to stagger player (skip next attack)
+    if (z.hp >= 80 && !isFirearm && rng.chance(25)) {
+      G.combatState._staggerUntil = Date.now() + 1500;
+      addLog(`${z.name} отбрасывает вас! Оглушение 1.5с.`, 'warning');
+      if (typeof showStatusFloat === 'function') showStatusFloat('ОГЛУШЕНИЕ!', '#ff8800');
+    }
+    // Soldier zombie: 15% counter-attack (instant retaliation)
+    if ((z.bonus || 0) >= 15 && z.currentHp > 0 && rng.chance(15)) {
+      const counterDmg = Math.max(1, Math.round(z.dmg * 0.5));
+      const hitPart = rng.pick(['torso','armL','armR']);
+      p.hp[hitPart] = Math.max(0, p.hp[hitPart] - counterDmg);
+      p.moodles.pain = Math.min(100, p.moodles.pain + counterDmg);
+      addLog(`${z.name} контратакует! −${counterDmg} [${hitPart}]`, 'danger');
+      if (typeof showDamageVignette === 'function') showDamageVignette(counterDmg / 20);
+    }
   } else {
     addLog(`Промах! ${z.name} уклоняется.`, 'warning');
     addNoise(isFirearm ? (w.noise || 15) : 5);
@@ -4179,11 +4951,16 @@ function zombieAttack() {
       const infAmount = Math.round(15 * (m.infectionMult || 1));
       p.moodles.infection = Math.min(100, p.moodles.infection + infAmount);
       addLog('УКУС! Риск заражения!', 'danger');
+      if (typeof showStatusFloat === 'function') showStatusFloat(`🦠 +${infAmount} инфекция!`, '#ff8800');
     }
-    // Bleeding check
-    if (rng.chance(20) && p.moodles.bleeding === 0) {
-      p.moodles.bleeding = 1;
-      addLog('Кровотечение! Нужен бинт.', 'danger');
+    // Bleeding check — severity scales with damage dealt
+    const _bleedChance = Math.min(40, 15 + dmg * 0.5);
+    if (rng.chance(_bleedChance)) {
+      const _bleedSeverity = dmg >= 15 ? 3 : dmg >= 10 ? 2 : 1;
+      p.moodles.bleeding = Math.min(3, Math.max(p.moodles.bleeding, _bleedSeverity));
+      const _bleedLabel = _bleedSeverity >= 3 ? 'Сильное кровотечение!' : _bleedSeverity >= 2 ? 'Кровотечение!' : 'Лёгкое кровотечение.';
+      addLog(`${_bleedLabel} Нужен бинт.`, 'danger');
+      if (typeof showStatusFloat === 'function') showStatusFloat(`🩸 ${_bleedLabel}`, '#ff4444');
     }
 
     // Death check
@@ -4216,6 +4993,18 @@ function combatVictory() {
   Bus.emit('combat:victory', { nodeId: G.world.currentNodeId });
   G.stats.zombiesKilled++;
   if(G?._dayStats) G._dayStats.kills++;
+  // Track night kills for achievements
+  const _period = typeof getTimePeriod === 'function' ? getTimePeriod() : 'day';
+  if (_period === 'night') G.stats.nightKills = (G.stats.nightKills || 0) + 1;
+  // Kill streak
+  G.stats._killStreak = (G.stats._killStreak || 0) + 1;
+  G.stats._lastKillTime = Date.now();
+  // Kill float
+  if (typeof showStatusFloat === 'function') {
+    const _streak = G.stats._killStreak;
+    if (_streak >= 3) showStatusFloat(`💀 ×${_streak} СЕРИЯ!`, _streak >= 5 ? '#ff4444' : '#ffcc00');
+    else showStatusFloat(`💀 ${z.name} убит!`, '#ff4444');
+  }
   // Award XP based on weapon type used
   const killWeapon = ITEMS[getActiveWeaponId()];
   const killSkill = (killWeapon?.subtype === 'firearm') ? 'firearms' : 'strength';
@@ -4275,7 +5064,9 @@ function pickZombieLoot(itemId, idx, btn) {
   if (!G._zombieLoot || G._zombieLoot[idx] === null) return;
   addItem(itemId, 1);
   G._zombieLoot[idx] = null;
-  addLog(`Подобрал: ${ITEMS[itemId].name}`, 'success');
+  const _itemName = ITEMS[itemId]?.name || itemId;
+  addLog(`Подобрал: ${_itemName}`, 'success');
+  if (typeof showLootAnimation === 'function') showLootAnimation(_itemName);
   btn.textContent = '✓';
   btn.disabled = true;
   btn.style.color = 'var(--text-dim)';
@@ -4289,13 +5080,22 @@ function combatFlee() {
   const baseChance = 70;
   const speedPenalty = z.speed * 10;  // runners: -30, fat: 0, shambler: -10
   const stealthBonus = p.skills.stealth * 5;
-  const encPenalty = isEncumbered() ? 25 : 0;
+  const encPenalty = Math.round(encumbranceLevel() * 25); // gradual: 0→25
   const fatiguePenalty = p.moodles.fatigue > 70 ? 15 : p.moodles.fatigue > 40 ? 5 : 0;
   const legPenalty = (p.hp.legL < 30 || p.hp.legR < 30) ? 20 : 0;
   const legCrit = (p.hp.legL < 10 || p.hp.legR < 10);
 
   if (legCrit) {
     addLog('Ноги критически повреждены! Бегство невозможно!', 'danger');
+    if (typeof showStatusFloat === 'function') showStatusFloat('Бегство невозможно!', '#ff4444');
+    showCombatUI();
+    return;
+  }
+
+  // Exhaustion check — can't sprint if completely spent
+  if (p.moodles.fatigue >= 95) {
+    addLog('Слишком устал для бегства!', 'danger');
+    if (typeof showStatusFloat === 'function') showStatusFloat('Нет сил бежать!', '#ff4444');
     showCombatUI();
     return;
   }
@@ -4306,8 +5106,10 @@ function combatFlee() {
   if (rng.chance(Math.max(5, Math.min(95, fleeChance)))) {
     addLog('Удалось сбежать!', 'warning');
     addNoise(20);
-    p.moodles.fatigue = Math.min(100, p.moodles.fatigue + 5);
+    p.moodles.fatigue = Math.min(100, p.moodles.fatigue + 10); // running costs more fatigue
+    p.moodles.panic = Math.max(0, p.moodles.panic - 10); // relief from escaping
     advanceTime(2);
+    if (typeof showStatusFloat === 'function') showStatusFloat('Сбежал!', '#44ff88');
     // Remove zombie entity from LIDAR
     sceneData.zombieEntities = sceneData.zombieEntities.filter(ze => {
       if (G.combatState && G.combatState.room && ze.roomIdx === G.world.currentRoom) return false;
@@ -4317,8 +5119,11 @@ function combatFlee() {
     if (G.combatState?._uiTimer) clearInterval(G.combatState._uiTimer);
     G.combatState = null;
   } else {
-    addLog('Не удалось сбежать!', 'danger');
+    addLog('Не удалось сбежать! Зомби атакует!', 'danger');
     addNoise(15);
+    p.moodles.fatigue = Math.min(100, p.moodles.fatigue + 5);
+    p.moodles.panic = Math.min(100, p.moodles.panic + 8);
+    if (typeof showStatusFloat === 'function') showStatusFloat('Побег не удался!', '#ff4444');
     zombieAttack();
     if (G.combatState) showCombatUI();
   }
@@ -4388,6 +5193,20 @@ function doRest() {
     addLog('Найди помещение для отдыха.', 'warning');
     return;
   }
+  // Can't rest while bleeding
+  if (G.player.moodles.bleeding > 0) {
+    addLog('⚠ Кровотечение! Сначала остановите кровь бинтом.', 'danger');
+    return;
+  }
+  // Can't rest if too hungry/thirsty
+  if (G.player.moodles.hunger > 80) {
+    addLog('⚠ Слишком голоден для сна. Поешьте сначала.', 'warning');
+    return;
+  }
+  if (G.player.moodles.thirst > 85) {
+    addLog('⚠ Мучает жажда. Попейте воды.', 'warning');
+    return;
+  }
 
   const loc = currentLocation();
   const isBase = loc && G.world.homeBase === loc.id;
@@ -4411,31 +5230,45 @@ function doRest() {
     }
   }
 
-  // Room type affects rest quality
+  // Room type + time of day affect rest quality
   const roomName = (loc && loc.rooms && loc.rooms[G.world.currentRoom]) ? loc.rooms[G.world.currentRoom].name : '';
-  const isBedroom = roomName === 'Спальня' || roomName === 'Детская' || roomName === 'Казарма';
+  const isBedroom = roomName === 'Спальня' || roomName === 'Детская' || roomName === 'Казарма' || _checkBaseUpgrade('bed');
+  const isNight = typeof getTimePeriod === 'function' && (getTimePeriod() === 'night' || getTimePeriod() === 'dusk');
+  const nightBonus = isNight ? 1.25 : 1.0; // 25% better rest at night
   const hours = 4;
-  const fatigueRecovery = isBedroom ? hours * 10 : hours * 8;
-  const painRecovery = isBedroom ? 15 : 10;
+  const faSkill = G.player.skills.firstAid || 0;
+  const faRestBonus = 1 + faSkill * 0.1; // +10% recovery per firstAid level
+  const fatigueRecovery = Math.round((isBedroom ? hours * 10 : hours * 8) * nightBonus);
+  const painRecovery = Math.round((isBedroom ? 15 : 10) * nightBonus * faRestBonus);
 
   G.player.moodles.fatigue = Math.max(0, G.player.moodles.fatigue - fatigueRecovery);
   G.player.moodles.pain = Math.max(0, G.player.moodles.pain - painRecovery);
   G.player.moodles.panic = Math.max(0, G.player.moodles.panic - 20);
   if (isBedroom) G.player.moodles.depression = Math.max(0, G.player.moodles.depression - 5);
+  // Illness recovery during rest (slow but meaningful)
+  if ((G.player.moodles.illness || 0) > 0) {
+    const illnessRecovery = Math.round(3 * faRestBonus * nightBonus);
+    G.player.moodles.illness = Math.max(0, G.player.moodles.illness - illnessRecovery);
+    if (illnessRecovery > 0) addLog(`Болезнь отступает. −${illnessRecovery} болезнь.`, 'info');
+  }
 
-  // HP recovery if fed
-  const hpRecovery = isBedroom ? 8 : 5;
+  // HP recovery if fed (night bonus + firstAid bonus)
+  const hpRecovery = Math.round((isBedroom ? 8 : 5) * nightBonus * faRestBonus);
   if (G.player.moodles.hunger < 50) {
     Object.keys(G.player.hp).forEach(part => {
-      if (G.player.hp[part] > 0 && G.player.hp[part] < 100) {
-        G.player.hp[part] = Math.min(100, G.player.hp[part] + hpRecovery);
+      const maxHp = part === 'torso' ? 100 : part === 'head' ? 80 : 60;
+      if (G.player.hp[part] > 0 && G.player.hp[part] < maxHp) {
+        G.player.hp[part] = Math.min(maxHp, G.player.hp[part] + hpRecovery);
       }
     });
   }
 
   advanceTime(hours);
-  const bedBonus = isBedroom ? ' Кровать: улучшенное восстановление!' : '';
-  addLog(`Отдых ${hours} ч. Усталость снижена.${G.player.moodles.hunger < 50 ? ' HP восстановлено.' : ''}${bedBonus}`, 'success');
+  const bedBonus = isBedroom ? ' 🛏 Кровать!' : '';
+  const nightBonusText = isNight ? ' 🌙 Ночной бонус!' : '';
+  addLog(`Отдых ${hours} ч. Усталость −${fatigueRecovery}.${G.player.moodles.hunger < 50 ? ` HP +${hpRecovery}.` : ''}${bedBonus}${nightBonusText}`, 'success');
+  if (typeof showHealFloat === 'function' && G.player.moodles.hunger < 50) showHealFloat(hpRecovery);
+  if (typeof showStatusFloat === 'function') showStatusFloat(`😴 −${fatigueRecovery} усталость`, '#88ccff');
   playSound('rest');
   renderPointCloud('pulse');
   updateUI();
@@ -4655,17 +5488,20 @@ function showInventory() {
   }
 
   let html = '';
-  // Weight bar
+  // Weight bar with gradual encumbrance colors
   const wPct = Math.min(100, (p.weight/mw)*100);
+  const encLvl = encumbranceLevel();
+  const wColor = enc ? '#ff4444' : encLvl > 0.5 ? '#ff8844' : encLvl > 0 ? '#ffcc00' : '#00FF41';
+  const wLabel = enc ? ' ⚠' : encLvl > 0 ? ` (−${Math.round(encLvl*40)}% скор.)` : '';
   html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">`;
-  html += `<div style="flex:1;height:5px;background:rgba(0,255,65,.1);border-radius:3px;overflow:hidden"><div style="width:${wPct}%;height:100%;background:${enc?'#ff4444':'#00FF41'};border-radius:3px"></div></div>`;
-  html += `<span style="font-size:10px;color:${enc?'#ff4444':'var(--green)'}">${p.weight}/${mw} кг</span>`;
+  html += `<div style="flex:1;height:5px;background:rgba(0,255,65,.1);border-radius:3px;overflow:hidden"><div style="width:${wPct}%;height:100%;background:${wColor};border-radius:3px"></div></div>`;
+  html += `<span style="font-size:10px;color:${wColor}">${p.weight}/${mw} кг${wLabel}</span>`;
   html += `</div>`;
 
   // Sorting buttons
   const sortMode = settings.invSort || 'none';
   html += '<div style="display:flex;gap:3px;margin-bottom:4px">';
-  const sortBtns = [['type','Тип'],['weight','Вес'],['alpha','А-Я'],['newest','Новые']];
+  const sortBtns = [['type','Тип'],['weight','Вес'],['alpha','А-Я'],['newest','Новые'],['fresh','🍖']];
   for (const [mode,label] of sortBtns) {
     const active = sortMode === mode;
     html += `<button class="act-btn" onclick="invSort('${mode}')" style="flex:1;font-size:9px;padding:2px 4px;${active?'border-color:var(--green);color:var(--green)':''}">${label}</button>`;
@@ -5368,12 +6204,16 @@ function closeBottomSheet() {
 function invShowInfo(idx) {
   const it = G.player.inventory[idx];
   if (!it) return;
-  showItemInfo(it.id, it);
+  showItemInfo(it.id, it, idx);
 }
 
-function showItemInfo(itemId, invItem) {
+function showItemInfo(itemId, invItem, invIdx) {
   const def = ITEMS[itemId];
   if (!def) return;
+  // Find inventory index if not provided
+  if (invIdx === undefined && invItem) {
+    invIdx = G.player.inventory.indexOf(invItem);
+  }
   const isEn = LANG?.current === 'en';
   const name = (invItem?.keyName) || def.name;
   const desc = isEn ? (def.descEn || def.desc || '') : (def.desc || '');
@@ -5478,6 +6318,69 @@ function showItemInfo(itemId, invItem) {
   if (def.type === 'book' && def.skill) html += `<div style="font-size:10px;color:var(--text-dim)">📚 ${isEn?'Skill':'Навык'}: ${SKILL_NAMES[def.skill]||def.skill} +${def.xpBoost}xp</div>`;
   if (def.depression) html += `<div style="font-size:10px;color:var(--cyan)">${isEn?'Depression':'Депрессия'}: ${def.depression}</div>`;
 
+  // ── Total stack weight ──
+  if (invItem && invItem.qty > 1 && def.weight) {
+    html += `<div style="font-size:9px;color:var(--text-muted);margin-top:4px">Всего: ${invItem.qty} шт. = ${(invItem.qty * def.weight).toFixed(1)} кг</div>`;
+  }
+
+  // ── Equipment comparison ──
+  if (def.type === 'clothing' && def.slot) {
+    const eqId = G.player.equipment?.[def.slot];
+    if (eqId && eqId !== itemId && ITEMS[eqId]) {
+      const eqDef = ITEMS[eqId];
+      html += `<div style="margin-top:6px;padding:4px 6px;border:1px solid var(--border);border-radius:3px;background:rgba(0,0,0,.3)">`;
+      html += `<div style="font-size:8px;color:var(--text-muted);letter-spacing:.1em;margin-bottom:2px">СЕЙЧАС НАДЕТО: ${eqDef.name}</div>`;
+      const _cmpPairs = [['armor','Защита'],['insulation','Теплоизол.'],['windResist','Ветрозащ.'],['waterResist','Водозащ.']];
+      _cmpPairs.forEach(([key, label]) => {
+        const newVal = def[key] || 0, oldVal = eqDef[key] || 0;
+        if (newVal === 0 && oldVal === 0) return;
+        const diff = newVal - oldVal;
+        const diffCol = diff > 0 ? 'var(--green)' : diff < 0 ? 'var(--red)' : 'var(--text-dim)';
+        const diffStr = diff > 0 ? `+${diff}` : `${diff}`;
+        html += `<div style="font-size:9px;display:flex;justify-content:space-between"><span style="color:var(--text-dim)">${label}</span><span>${newVal} vs ${oldVal} <span style="color:${diffCol}">(${diffStr})</span></span></div>`;
+      });
+      html += `</div>`;
+    }
+  }
+  if (def.type === 'weapon') {
+    const slot = G.player.activeSlot || 1;
+    const eqId = G.player[`weaponSlot${slot}`];
+    if (eqId && eqId !== itemId && ITEMS[eqId]) {
+      const eqDef = ITEMS[eqId];
+      html += `<div style="margin-top:6px;padding:4px 6px;border:1px solid var(--border);border-radius:3px;background:rgba(0,0,0,.3)">`;
+      html += `<div style="font-size:8px;color:var(--text-muted);letter-spacing:.1em;margin-bottom:2px">СЛОТ ${slot}: ${eqDef.name}</div>`;
+      const _wpPairs = [['dmg','Урон'],['accuracy','Точность'],['noise','Шум']];
+      _wpPairs.forEach(([key, label]) => {
+        const newVal = def[key] || 0, oldVal = eqDef[key] || 0;
+        if (newVal === 0 && oldVal === 0) return;
+        const diff = newVal - oldVal;
+        const isNoise = key === 'noise';
+        const diffCol = isNoise ? (diff < 0 ? 'var(--green)' : diff > 0 ? 'var(--red)' : 'var(--text-dim)') : (diff > 0 ? 'var(--green)' : diff < 0 ? 'var(--red)' : 'var(--text-dim)');
+        const diffStr = diff > 0 ? `+${diff}` : `${diff}`;
+        html += `<div style="font-size:9px;display:flex;justify-content:space-between"><span style="color:var(--text-dim)">${label}</span><span>${newVal} vs ${oldVal} <span style="color:${diffCol}">(${diffStr})</span></span></div>`;
+      });
+      html += `</div>`;
+    }
+  }
+
+  // ── Action buttons ──
+  if (invIdx >= 0) {
+    html += `<div style="display:flex;gap:4px;margin-top:8px">`;
+    if (def.type === 'food') html += `<button class="act-btn" onclick="closeModal();useFood(${invIdx});showInventory()" style="flex:1;padding:5px;font-size:10px;border-color:var(--green);color:var(--green)">🍖 Съесть</button>`;
+    if (def.type === 'medicine') html += `<button class="act-btn" onclick="closeModal();useMedicine(${invIdx});showInventory()" style="flex:1;padding:5px;font-size:10px;border-color:var(--green);color:var(--green)">💊 Использовать</button>`;
+    if (def.type === 'book') html += `<button class="act-btn" onclick="closeModal();invUseBook(${invIdx})" style="flex:1;padding:5px;font-size:10px;border-color:var(--cyan);color:var(--cyan)">📖 Читать</button>`;
+    if (def.type === 'comfort') html += `<button class="act-btn" onclick="closeModal();useComfort(${invIdx});showInventory()" style="flex:1;padding:5px;font-size:10px;border-color:var(--cyan);color:var(--cyan)">Использовать</button>`;
+    if (def.type === 'weapon') html += `<button class="act-btn" onclick="closeModal();equipItem(${invIdx})" style="flex:1;padding:5px;font-size:10px;border-color:var(--green);color:var(--green)">⚔ Экипировать</button>`;
+    if (def.type === 'clothing') html += `<button class="act-btn" onclick="closeModal();equipClothing(${invIdx})" style="flex:1;padding:5px;font-size:10px;border-color:var(--green);color:var(--green)">👕 Надеть</button>`;
+    // Drop with split option for stacks
+    if (invItem && invItem.qty > 1) {
+      html += `<button class="act-btn" onclick="closeModal();showDropQtyDialog(${invIdx})" style="flex:0 0 auto;padding:5px 8px;font-size:10px;border-color:var(--red);color:var(--red)">▼ ${invItem.qty}</button>`;
+    } else {
+      html += `<button class="act-btn" onclick="closeModal();invDropItem(${invIdx})" style="flex:0 0 auto;padding:5px 8px;font-size:10px;border-color:var(--red);color:var(--red)">▼</button>`;
+    }
+    html += `</div>`;
+  }
+
   openModal(`ℹ ${name}`, html);
 }
 
@@ -5542,6 +6445,54 @@ function invUseMedicine(idx) { closeCtxMenu(); useMedicine(idx); showInventory()
 function invUseBook(idx) { closeCtxMenu(); useBook(idx); showInventory(); }
 function invUseComfort(idx) { closeCtxMenu(); useComfort(idx); showInventory(); }
 function invDropItem(idx) { closeCtxMenu(); dropItem(idx); showInventory(); }
+
+function showDropQtyDialog(idx) {
+  const it = G.player.inventory[idx];
+  if (!it || it.qty <= 1) { invDropItem(idx); return; }
+  const def = ITEMS[it.id];
+  const name = def?.name || it.id;
+  let html = `<div style="text-align:center;margin-bottom:8px;color:var(--text-dim);font-size:11px">Сколько выбросить?</div>`;
+  html += `<div style="text-align:center;margin-bottom:8px">${typeof itemIconHtml === 'function' ? itemIconHtml(it.id, 28) : ''} <span style="color:var(--green);font-size:13px">${name}</span> <span style="color:var(--text-dim)">×${it.qty}</span></div>`;
+  html += `<div style="display:flex;align-items:center;gap:8px;justify-content:center;margin-bottom:10px">`;
+  html += `<button class="act-btn" onclick="document.getElementById('drop-qty-val').stepDown();_updateDropSlider()" style="width:32px;height:32px;font-size:16px">−</button>`;
+  html += `<input type="range" id="drop-qty-val" min="1" max="${it.qty}" value="${Math.ceil(it.qty/2)}" oninput="_updateDropSlider()" style="flex:1;accent-color:var(--green)">`;
+  html += `<button class="act-btn" onclick="document.getElementById('drop-qty-val').stepUp();_updateDropSlider()" style="width:32px;height:32px;font-size:16px">+</button>`;
+  html += `</div>`;
+  html += `<div style="text-align:center;margin-bottom:8px"><span id="drop-qty-label" style="color:var(--yellow);font-size:14px;font-weight:bold">${Math.ceil(it.qty/2)}</span> <span style="color:var(--text-dim);font-size:10px">из ${it.qty}</span></div>`;
+  html += `<div style="display:flex;gap:4px">`;
+  html += `<button class="act-btn" onclick="doDropQty(${idx})" style="flex:1;padding:6px;border-color:var(--red);color:var(--red)">▼ Выбросить</button>`;
+  html += `<button class="act-btn" onclick="doDropQty(${idx},true)" style="flex:0 0 auto;padding:6px 12px;border-color:var(--red);color:var(--red)">Всё</button>`;
+  html += `<button class="act-btn" onclick="closeModal();showInventory()" style="flex:0 0 auto;padding:6px 12px">✕</button>`;
+  html += `</div>`;
+  openModal(`▼ ${name}`, html);
+}
+
+function _updateDropSlider() {
+  const el = document.getElementById('drop-qty-val');
+  const label = document.getElementById('drop-qty-label');
+  if (el && label) label.textContent = el.value;
+}
+
+function doDropQty(idx, all) {
+  const it = G.player.inventory[idx];
+  if (!it) { closeModal(); return; }
+  const qty = all ? it.qty : parseInt(document.getElementById('drop-qty-val')?.value || 1);
+  if (qty >= it.qty) {
+    dropItem(idx);
+  } else {
+    // Partial drop: reduce qty and place on floor
+    it.qty -= qty;
+    const room = currentRoom();
+    if (room) {
+      if (!room.floor) room.floor = [];
+      room.floor.push({ id: it.id, qty, durability: it.durability, freshDays: it.freshDays });
+    }
+    addLog(`Выброшено: ${ITEMS[it.id]?.name || it.id} ×${qty}`, 'info');
+    calcWeight();
+  }
+  closeModal();
+  showInventory();
+}
 
 // ── Key Holder ──
 function showKeyHolder(holderIdx) {
@@ -5730,13 +6681,25 @@ function useFood(idx) {
     G.player.hp.torso = Math.max(0, G.player.hp.torso - 15);
     G.player.moodles.pain = Math.min(100, G.player.moodles.pain + 25);
     G.player.moodles.illness = Math.min(100, (G.player.moodles.illness || 0) + 20);
+    if (typeof showStatusFloat === 'function') showStatusFloat('☠ Отравление!', '#ff4444');
     playSound('damage');
-  } else if (item.freshDays <= 2 && item.freshDays > 0 && rng.chance(25)) {
-    addLog('⚠ Чёрствая еда... Лёгкое недомогание.', 'warning');
-    G.player.moodles.pain = Math.min(100, G.player.moodles.pain + 5);
+  } else if (item.freshDays <= 2 && item.freshDays > 0) {
+    // Stale food — reduced nutrition, chance of mild sickness
+    const cookBonus = 1 + (G.player.skills.cooking || 0) * 0.1;
+    const staleMult = 0.5; // 50% nutrition from stale food
+    if (def.hunger) G.player.moodles.hunger = Math.max(0, G.player.moodles.hunger + Math.round(def.hunger * cookBonus * staleMult));
+    if (def.thirst) G.player.moodles.thirst = Math.max(0, G.player.moodles.thirst + def.thirst);
+    if (rng.chance(25)) {
+      G.player.moodles.pain = Math.min(100, G.player.moodles.pain + 5);
+      G.player.moodles.illness = Math.min(100, (G.player.moodles.illness || 0) + 5);
+      addLog(`Чёрствая еда: ${def.name}. Лёгкое недомогание, половина пользы.`, 'warning');
+    } else {
+      addLog(`Чёрствая еда: ${def.name}. Не очень вкусно, но съедобно.`, 'warning');
+    }
     G.player.moodles.depression = Math.min(100, (G.player.moodles.depression || 0) + 3);
+    addSkillXp('cooking', 2);
   } else {
-    // Cooking skill bonus: +10% nutrition per level (up to +50%)
+    // Fresh food — full nutrition
     const cookBonus = 1 + (G.player.skills.cooking || 0) * 0.1;
     if (def.hunger) G.player.moodles.hunger = Math.max(0, G.player.moodles.hunger + Math.round(def.hunger * cookBonus));
     if (def.thirst) G.player.moodles.thirst = Math.max(0, G.player.moodles.thirst + def.thirst);
@@ -5746,6 +6709,15 @@ function useFood(idx) {
     if (def.pain) G.player.moodles.pain = Math.max(0, G.player.moodles.pain + def.pain);
     if (def.accuracy) G.modifiers = { ...(G.modifiers || {}), tempAccuracy: (G.modifiers?.tempAccuracy || 0) + def.accuracy };
     addLog(`Употреблено: ${def.name}`, 'success');
+    // Nutrition float
+    if (typeof showNutritionFloat === 'function') {
+      const parts = [];
+      if (def.hunger) parts.push(`🍖 ${def.hunger}`);
+      if (def.thirst) parts.push(`💧 ${def.thirst}`);
+      if (def.painRelief) parts.push(`💊 −${def.painRelief}`);
+      if (def.fatigue) parts.push(`⚡ ${def.fatigue}`);
+      if (parts.length) showNutritionFloat(parts.join('  '));
+    }
     addSkillXp('cooking', 3);
   }
   addNoise(def.noise || 0);
@@ -5767,20 +6739,25 @@ function useMedicine(idx) {
       const bandageHeal = Math.round(5 * faBonus);
       Object.keys(G.player.hp).forEach(k => { G.player.hp[k] = Math.min(100, G.player.hp[k] + bandageHeal); });
       addLog(`Кровотечение остановлено. +${bandageHeal} HP.`, 'success');
+      if (typeof showHealFloat === 'function') showHealFloat(bandageHeal);
+      if (typeof showStatusFloat === 'function') showStatusFloat('Кровотечение остановлено', '#44ff88');
       break;
     case 'antibiotics':
       if (!G.difficulty.infectionCure && G.player.moodles.infection >= 70) {
         addLog('Заражение слишком сильное. Антибиотики бессильны.', 'danger');
+        if (typeof showStatusFloat === 'function') showStatusFloat('Антибиотики бессильны!', '#ff4444');
         return;
       }
       const abReduce = Math.round(30 * faBonus);
       G.player.moodles.infection = Math.max(0, G.player.moodles.infection - abReduce);
       addLog(`Антибиотики приняты. Заражение −${abReduce}.`, 'success');
+      if (typeof showStatusFloat === 'function') showStatusFloat(`🦠 −${abReduce} инфекция`, '#44ff88');
       break;
     case 'painkillers':
       const pkReduce = Math.round(40 * faBonus);
       G.player.moodles.pain = Math.max(0, G.player.moodles.pain - pkReduce);
       addLog(`Обезболивающее принято. Боль −${pkReduce}.`, 'success');
+      if (typeof showStatusFloat === 'function') showStatusFloat(`💊 −${pkReduce} боль`, '#88ccff');
       break;
     case 'splint': {
       const limbs = ['armL','armR','legL','legR'];
@@ -5789,12 +6766,14 @@ function useMedicine(idx) {
       G.player.hp[worst] = Math.min(100, G.player.hp[worst] + splintHeal);
       const partNames = { armL:'Л.рука', armR:'П.рука', legL:'Л.нога', legR:'П.нога' };
       addLog(`Шина наложена на ${partNames[worst]}. +${splintHeal} HP.`, 'success');
+      if (typeof showHealFloat === 'function') showHealFloat(splintHeal, partNames[worst]);
       break;
     }
     case 'disinfectant':
       const disReduce = Math.round(15 * faBonus);
       G.player.moodles.infection = Math.max(0, G.player.moodles.infection - disReduce);
       addLog(`Раны продезинфицированы. Инфекция −${disReduce}.`, 'success');
+      if (typeof showStatusFloat === 'function') showStatusFloat(`🧴 −${disReduce} инфекция`, '#44ff88');
       break;
     case 'vitamins':
       G.player.moodles.depression = Math.max(0, (G.player.moodles.depression || 0) - Math.round(10 * faBonus));
@@ -5804,6 +6783,15 @@ function useMedicine(idx) {
     case 'antidepressants':
       G.player.moodles.depression = Math.max(0, (G.player.moodles.depression || 0) - Math.round(35 * faBonus));
       addLog('Антидепрессанты приняты. Депрессия значительно снижена.', 'success');
+      break;
+    case 'buff':
+      if (item.id === 'adrenaline') {
+        G.player._adrenaline = Date.now() + 300000; // 5 min real-time buff
+        G.player.moodles.panic = Math.max(0, G.player.moodles.panic - 30);
+        G.player.moodles.pain = Math.max(0, G.player.moodles.pain - 20);
+        addLog('💉 Адреналин! +30% скорость атаки, −30 паника, −20 боль. 5 мин.', 'success');
+        if (typeof showStatusFloat === 'function') showStatusFloat('💉 АДРЕНАЛИН!', '#ff4444');
+      }
       break;
   }
   addSkillXp('firstAid', 10);
@@ -5817,13 +6805,59 @@ function useBook(idx) {
   const item = G.player.inventory[idx];
   const def = ITEMS[item.id];
   if (!def || def.type !== 'book') return;
+
+  // Can't read when too tired or in pain
+  if (G.player.moodles.fatigue > 85) {
+    addLog('Слишком устал, буквы расплываются перед глазами.', 'warning');
+    return;
+  }
+  if (G.player.moodles.panic > 70) {
+    addLog('Руки трясутся, невозможно сосредоточиться на чтении.', 'warning');
+    return;
+  }
+
   const skill = def.skill;
-  const xp = def.xpBoost || 50;
-  addSkillXp(skill, xp);
-  advanceTime(2); // Reading takes time
-  addLog(`Прочитано: ${def.name}. +${xp} XP к навыку "${skill}".`, 'success');
+  let baseXp = def.xpBoost || 50;
+
+  // Diminishing returns at higher skill levels
+  const currentSkill = G.player.skills[skill] || 0;
+  if (currentSkill >= 4) baseXp = Math.round(baseXp * 0.5);
+  else if (currentSkill >= 3) baseXp = Math.round(baseXp * 0.7);
+
+  // Condition bonuses
+  let bonus = 1;
+  let bonusLog = [];
+
+  // Well-rested bonus
+  if (G.player.moodles.fatigue < 20) {
+    bonus += 0.25;
+    bonusLog.push('+25% отдых');
+  }
+  // Low stress/depression bonus
+  if ((G.player.moodles.depression || 0) < 30) {
+    bonus += 0.15;
+    bonusLog.push('+15% настрой');
+  }
+  // Night reading penalty (realism — poor light)
+  if (G.time && (G.time.hour >= 21 || G.time.hour < 6)) {
+    const hasLight = countItem('flashlight') > 0 || hasItem('torch');
+    if (!hasLight) {
+      bonus -= 0.2;
+      bonusLog.push('−20% темно');
+    }
+  }
+
+  const finalXp = Math.max(5, Math.round(baseXp * bonus));
+  addSkillXp(skill, finalXp);
+  advanceTime(2);
+
+  const bonusStr = bonusLog.length ? ` (${bonusLog.join(', ')})` : '';
+  addLog(`Прочитано: ${def.name}. +${finalXp} XP к "${skill}"${bonusStr}.`, 'success');
+  if (currentSkill >= 4) addLog('Книга уже не так полезна на этом уровне навыка.', 'info');
+
   // Depression reduction from reading
-  G.player.moodles.depression = Math.max(0, (G.player.moodles.depression || 0) - 5);
+  G.player.moodles.depression = Math.max(0, (G.player.moodles.depression || 0) - 8);
+
   removeItem(item.id, 1);
   showInventory();
   updateUI();
@@ -5929,13 +6963,16 @@ function showHealth() {
   const partNames = { head:'Голова', torso:'Торс', armL:'Лев. рука', armR:'Прав. рука', legL:'Лев. нога', legR:'Прав. нога' };
   let html = '<div style="margin-bottom:10px;color:var(--text-dim);font-size:10px;letter-spacing:.1em">СОСТОЯНИЕ ТЕЛА</div>';
 
+  const partMaxHp = { head:80, torso:100, armL:60, armR:60, legL:60, legR:60 };
   Object.entries(p.hp).forEach(([part, val]) => {
-    const color = val > 50 ? 'var(--green)' : val > 15 ? 'var(--yellow)' : 'var(--red)';
+    const maxHp = partMaxHp[part] || 100;
+    const pct = Math.round(val / maxHp * 100);
+    const color = pct > 50 ? 'var(--green)' : pct > 15 ? 'var(--yellow)' : 'var(--red)';
     html += `<div class="body-part">
       <span>${partNames[part]}</span>
       <div style="display:flex;align-items:center;gap:6px">
-        <span style="color:${color};font-size:10px">${val}%</span>
-        <div class="bp-bar"><div class="bp-fill" style="width:${val}%;background:${color}"></div></div>
+        <span style="color:${color};font-size:10px">${Math.round(val)}/${maxHp}</span>
+        <div class="bp-bar"><div class="bp-fill" style="width:${pct}%;background:${color}"></div></div>
       </div>
     </div>`;
   });
@@ -5966,8 +7003,21 @@ function showHealth() {
   Object.entries(p.moodles).forEach(([key, val]) => {
     if (!moodleNames[key]) return; // Skip temperature/wetness (shown above)
     if (key === 'bleeding') {
-      const active = val > 0;
-      html += `<div class="body-part"><span>${moodleNames[key]}</span><span style="color:${active ? 'var(--red)' : 'var(--green)'};font-size:10px">${active ? 'АКТИВНО' : 'Нет'}</span></div>`;
+      const bleedLabels = { 0:'Нет', 1:'Лёгкое', 2:'Среднее', 3:'Тяжёлое' };
+      const bleedColors = { 0:'var(--green)', 1:'var(--yellow)', 2:'#ff8800', 3:'var(--red)' };
+      const bl = Math.min(3, Math.max(0, val));
+      html += `<div class="body-part"><span>${moodleNames[key]}</span><span style="color:${bleedColors[bl]};font-size:10px">${bleedLabels[bl]}${bl === 1 ? ' (может остановиться)' : bl >= 2 ? ' ⚠ нужен бинт!' : ''}</span></div>`;
+    } else if (key === 'infection') {
+      const infStage = val > 90 ? 'Критическая' : val > 75 ? 'Тяжёлая' : val > 50 ? 'Средняя' : val > 20 ? 'Лёгкая' : val > 0 ? 'Начальная' : 'Нет';
+      const infColor = val > 75 ? 'var(--red)' : val > 50 ? '#ff8800' : val > 20 ? 'var(--yellow)' : val > 0 ? 'var(--cyan)' : 'var(--green)';
+      const infTip = val > 75 ? ' — HP падает!' : val > 50 ? ' — боль, жар' : val > 20 ? ' — растёт!' : '';
+      html += `<div class="body-part">
+        <span>${moodleNames[key]}</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="color:${infColor};font-size:10px">${Math.round(val)} — ${infStage}${infTip}</span>
+          <div class="bp-bar"><div class="bp-fill" style="width:${val}%;background:${infColor}"></div></div>
+        </div>
+      </div>`;
     } else {
       const level = getMoodleLevel(val);
       const color = level === 'ok' ? 'var(--green)' : level === 'mild' ? 'var(--yellow)' : level === 'severe' ? '#ff8800' : 'var(--red)';
@@ -5983,20 +7033,34 @@ function showHealth() {
   });
 
   html += '<div style="margin:14px 0 8px;color:var(--text-dim);font-size:10px;letter-spacing:.1em">НАВЫКИ</div>';
+  const _skillBenefits = {
+    strength: ['урон +5%','урон +10%','урон +15%, крафт бонус','урон +20%','урон +25%'],
+    stealth: ['шум −3%','шум −6%','порог +10, крафт бонус','шум −12%','шум −15%, макс. скрытность'],
+    scouting: ['обыск −8%','лут бонус','обыск −24%','обыск −32%','обыск −40%'],
+    firstAid: ['лечение +15%','лечение +30%','лечение +45%, крафт бонус','лечение +60%','лечение +75%'],
+    mechanics: ['ремонт +10','ремонт +20','ремонт +30, крафт бонус','ремонт +40','ремонт +50'],
+    cooking: ['питание +10%','питание +20%','питание +30%, крафт бонус','питание +40%','питание +50%'],
+    lockpicking: ['замок +10%','замок +20%','замок +30%','замок +40%','замок +50%'],
+    firearms: ['точность +8','точность +16','точность +24, крафт бонус','точность +32','точность +40'],
+    carpentry: ['строительство','строительство+','строительство++','строительство+++','мастер-строитель']
+  };
   Object.entries(p.skills).forEach(([skill, level]) => {
     const xp = p.skillXp[skill] || 0;
-    const nextThreshold = (level + 1) * 30;
+    const nextThreshold = getSkillThreshold(level);
+    const remaining = level >= 5 ? 0 : nextThreshold - xp;
     const pct = level >= 5 ? 100 : Math.round(xp / nextThreshold * 100);
+    const nextBenefit = level < 5 && _skillBenefits[skill] ? _skillBenefits[skill][level] : '';
     html += `<div class="body-part">
       <span>${getSkillName(skill)}</span>
       <div style="display:flex;align-items:center;gap:6px">
-        <span style="color:var(--cyan);font-size:10px">Ур.${level}${level < 5 ? ` (${pct}%)` : ' MAX'}</span>
+        <span style="color:var(--cyan);font-size:10px">Ур.${level}${level < 5 ? ` (${xp}/${nextThreshold})` : ' MAX'}</span>
         <div class="bp-bar"><div class="bp-fill" style="width:${level >= 5 ? 100 : pct}%;background:var(--cyan)"></div></div>
       </div>
     </div>`;
+    if (nextBenefit) html += `<div style="font-size:8px;color:var(--text-muted);padding-left:8px;margin-top:-2px;margin-bottom:2px">→ Ур.${level+1}: ${nextBenefit} (ещё ${remaining} XP)</div>`;
   });
 
-  html += `<div style="margin-top:14px;color:var(--text-dim);font-size:10px;text-align:center">Дней прожито: ${G.player.daysSurvived} · Зомби убито: ${G.stats.zombiesKilled}</div>`;
+  html += `<div style="margin-top:14px;color:var(--text-dim);font-size:10px;text-align:center">Дней прожито: ${G.player.daysSurvived} · Зомби убито: ${G.stats.zombiesKilled} · Замков вскрыто: ${G.stats.locksPicked || 0}</div>`;
 
   if (typeof _modalStack !== 'undefined') _modalStack = [];
   if (typeof replaceModal === 'function' && document.getElementById('modal-overlay')?.classList.contains('active')) replaceModal('Здоровье и навыки', html, 'health');
@@ -6004,9 +7068,23 @@ function showHealth() {
 }
 
 // ── CRAFTING ──
+// Calculate how many times a recipe can be crafted
+function getMaxCraftCount(recipe) {
+  if (recipe.result.startsWith('_') && recipe.result !== '_stew' && recipe.result !== '_smoked_meat' && recipe.result !== '_lockpick' && recipe.result !== '_torch') return 1; // specials: max 1
+  let maxCount = 999;
+  Object.entries(recipe.components).forEach(([id, qty]) => {
+    if (recipe.returnKnife && id === 'knife') return;
+    if (recipe.keepHammer && id === 'hammer') return;
+    if (recipe.keepAll) return;
+    const have = countItem(id);
+    maxCount = Math.min(maxCount, Math.floor(have / qty));
+  });
+  return Math.max(0, maxCount);
+}
+
 function showCrafting() {
   const _craftLoc = currentLocation();
-  const isAtBase = _craftLoc && G.world.homeBase === _craftLoc.id;
+  const isAtBase = (_craftLoc && G.world.homeBase === _craftLoc.id) || _checkBaseUpgrade('workbench');
 
   // Categorize recipes
   const categories = {
@@ -6014,26 +7092,36 @@ function showCrafting() {
   };
   RECIPES.forEach((recipe, i) => {
     const r = recipe.result;
-    if (r === '_barricade' || r === '_trap' || r === '_alarm') categories['База'].push({recipe, i});
-    else if (r === 'spear' || r === 'molotov' || r === '_repair_melee' || r === '_repair_firearm') categories['Оружие'].push({recipe, i});
+    if (r === '_barricade' || r === '_trap' || r === '_alarm' || r === '_glass_trap') categories['База'].push({recipe, i});
+    else if (r === 'spear' || r === 'molotov' || r === '_repair_melee' || r === '_repair_firearm' || r === '_armor_patch' || r === 'pipe_bomb' || r === '_ammo_9x19') categories['Оружие'].push({recipe, i});
     else if (r === 'bandage' || r === 'splint') categories['Медицина'].push({recipe, i});
-    else if (r === 'soup' || r === '_stew' || r === '_smoked_meat') categories['Еда'].push({recipe, i});
+    else if (r === 'soup' || r === '_stew' || r === '_smoked_meat' || r === '_boiled_water' || r === '_herbal_tea') categories['Еда'].push({recipe, i});
     else categories['Инструменты'].push({recipe, i});
   });
 
   let html = '';
   for (const [catName, items] of Object.entries(categories)) {
     if (items.length === 0) continue;
+    // Sort: craftable recipes first
+    items.sort((a, b) => {
+      const aOk = Object.entries(a.recipe.components).every(([id,q]) => hasItem(id,q)) && (!a.recipe.skill || G.player.skills[a.recipe.skill] >= a.recipe.skillReq) && (a.recipe.needsBase ? isAtBase : true);
+      const bOk = Object.entries(b.recipe.components).every(([id,q]) => hasItem(id,q)) && (!b.recipe.skill || G.player.skills[b.recipe.skill] >= b.recipe.skillReq) && (b.recipe.needsBase ? isAtBase : true);
+      return bOk - aOk;
+    });
+
     html += `<div style="color:var(--cyan);font-size:9px;letter-spacing:.1em;text-transform:uppercase;margin:10px 0 6px;padding-bottom:3px;border-bottom:1px solid rgba(0,229,255,.15)">${catName}</div>`;
     for (const {recipe, i} of items) {
       const hasSkill = !recipe.skill || G.player.skills[recipe.skill] >= recipe.skillReq;
       const hasComps = Object.entries(recipe.components).every(([id, qty]) => hasItem(id, qty));
       const needsBaseCheck = recipe.needsBase ? isAtBase : true;
       const canCraft = hasSkill && hasComps && needsBaseCheck;
+      const maxCount = canCraft ? getMaxCraftCount(recipe) : 0;
 
       const compPills = Object.entries(recipe.components).map(([id, qty]) => {
-        const has = hasItem(id, qty);
-        return `<span style="display:inline-block;padding:1px 5px;margin:1px;border-radius:2px;font-size:9px;border:1px solid ${has ? 'var(--green-dim)' : 'rgba(255,34,68,.3)'};color:${has ? 'var(--green)' : 'var(--red)'};background:${has ? 'rgba(0,255,65,.05)' : 'rgba(255,34,68,.05)'}">${ITEMS[id]?.name || id}${qty > 1 ? ' ×'+qty : ''}</span>`;
+        const have = countItem(id);
+        const enough = have >= qty;
+        const icon = typeof itemIconHtml === 'function' ? itemIconHtml(id, 12) : '';
+        return `<span style="display:inline-flex;align-items:center;gap:2px;padding:1px 5px;margin:1px;border-radius:2px;font-size:9px;border:1px solid ${enough ? 'var(--green-dim)' : 'rgba(255,34,68,.3)'};color:${enough ? 'var(--green)' : 'var(--red)'};background:${enough ? 'rgba(0,255,65,.05)' : 'rgba(255,34,68,.05)'}">${icon}<span style="color:${enough ? 'var(--green)' : 'var(--red)'}">${have}/${qty}</span></span>`;
       }).join('');
 
       const skillBadge = recipe.skill
@@ -6044,14 +7132,31 @@ function showCrafting() {
         ? `<span style="font-size:8px;padding:1px 4px;border-radius:2px;border:1px solid ${isAtBase ? 'var(--green-dim)' : 'rgba(255,34,68,.3)'};color:${isAtBase ? 'var(--text-dim)' : 'var(--red)'}">🏠 База${isAtBase ? ' ✓' : ''}</span>`
         : '';
 
+      // Result item icon
+      const resultId = recipe.result.startsWith('_') ? null : recipe.result;
+      const resultIcon = resultId && typeof itemIconHtml === 'function' ? itemIconHtml(resultId, 18) : '';
+
+      // Craft button with count
+      let craftBtn;
+      if (canCraft && maxCount > 1) {
+        craftBtn = `<div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+          <button class="act-btn" onclick="doCraft(${i});showCrafting()" style="padding:4px 10px;font-size:10px;border-color:var(--green);color:var(--green)">⚒ ×1</button>
+          <button class="act-btn" onclick="doCraftBatch(${i},${Math.min(maxCount,5)});showCrafting()" style="padding:3px 10px;font-size:8px;border-color:var(--cyan);color:var(--cyan)">×${Math.min(maxCount,5)}</button>
+        </div>`;
+      } else if (canCraft) {
+        craftBtn = `<button class="act-btn" style="flex-shrink:0;padding:6px 12px;font-size:10px;border-color:var(--green);color:var(--green)" onclick="doCraft(${i});showCrafting()">⚒ Создать</button>`;
+      } else {
+        craftBtn = `<button class="act-btn" style="flex-shrink:0;padding:6px 12px;font-size:10px;opacity:.4" disabled>✗</button>`;
+      }
+
       html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;margin-bottom:3px;border:1px solid ${canCraft ? 'var(--green-dim)' : 'var(--border)'};border-radius:4px;background:${canCraft ? 'rgba(0,255,65,.03)' : 'rgba(0,0,0,.2)'}">
+        ${resultIcon ? `<div style="flex-shrink:0;opacity:${canCraft?1:0.3}">${resultIcon}</div>` : ''}
         <div style="flex:1;min-width:0">
-          <div style="color:${canCraft ? 'var(--green)' : 'var(--text-dim)'};font-size:11px;font-weight:bold;margin-bottom:2px">${recipe.name}</div>
-          ${recipe.desc ? `<div style="color:var(--text-muted);font-size:9px;margin-bottom:3px;font-style:italic">${recipe.desc}</div>` : ''}
+          <div style="color:${canCraft ? 'var(--green)' : 'var(--text-dim)'};font-size:11px;font-weight:bold;margin-bottom:2px">${recipe.name}${maxCount > 1 ? ` <span style="color:var(--cyan);font-size:9px">(×${maxCount})</span>` : ''}</div>
           <div style="margin-bottom:2px">${compPills}</div>
           <div style="display:flex;gap:4px;flex-wrap:wrap">${skillBadge}${baseBadge}</div>
         </div>
-        <button class="act-btn" style="flex-shrink:0;padding:6px 12px;font-size:10px;${canCraft ? 'border-color:var(--green);color:var(--green)' : 'opacity:.4'}" ${canCraft ? `onclick="doCraft(${i});showCrafting()"` : 'disabled'}>${canCraft ? '⚒ Создать' : '✗'}</button>
+        ${craftBtn}
       </div>`;
     }
   }
@@ -6083,12 +7188,15 @@ function doCraft(idx) {
   if (recipe.result === '_barricade') {
     G.world.homeBaseSecurity = Math.min(10, G.world.homeBaseSecurity + 2);
     addLog(`Баррикада установлена! Безопасность: ${G.world.homeBaseSecurity}/10`, 'success');
+    if (typeof showStatusFloat === 'function') showStatusFloat(`🛡 Безопасность ${G.world.homeBaseSecurity}/10`, '#44ff88');
   } else if (recipe.result === '_trap') {
     G.world.homeBaseTraps = (G.world.homeBaseTraps || 0) + 1;
     addLog(`Растяжка-ловушка установлена! (×${G.world.homeBaseTraps})`, 'success');
+    if (typeof showStatusFloat === 'function') showStatusFloat(`🪤 Ловушка ×${G.world.homeBaseTraps}`, '#ffaa00');
   } else if (recipe.result === '_alarm') {
     G.world.homeBaseSecurity = Math.min(10, G.world.homeBaseSecurity + 2);
     addLog(`Сигнализация установлена! Безопасность: ${G.world.homeBaseSecurity}/10`, 'success');
+    if (typeof showStatusFloat === 'function') showStatusFloat(`🔔 Безопасность ${G.world.homeBaseSecurity}/10`, '#44ff88');
   } else if (recipe.result === '_repair_melee') {
     const wpn = G.player.inventory.find(it => ITEMS[it.id] && ITEMS[it.id].type === 'weapon' && ITEMS[it.id].subtype === 'melee' && it.id !== 'fist' && it.durability < (ITEMS[it.id].dur || 100));
     if (wpn) {
@@ -6097,6 +7205,7 @@ function doCraft(idx) {
       wpn.durability = Math.min(maxDur, wpn.durability + repairAmt);
       removeItem('scrap_metal', 1); removeItem('tape', 1);
       addLog(`${ITEMS[wpn.id].name} починено! Прочность: ${Math.round(wpn.durability)}`, 'success');
+      if (typeof showStatusFloat === 'function') showStatusFloat(`🔧 +${repairAmt} прочность`, '#44ff88');
     } else {
       addLog('Нет оружия ближнего боя для починки.', 'warning');
       return;
@@ -6109,6 +7218,7 @@ function doCraft(idx) {
       wpn.durability = Math.min(maxDur, wpn.durability + repairAmt);
       removeItem('scrap_metal', 1); removeItem('duct_tape', 1);
       addLog(`${ITEMS[wpn.id].name} починено! Прочность: ${Math.round(wpn.durability)}`, 'success');
+      if (typeof showStatusFloat === 'function') showStatusFloat(`🔧 +${repairAmt} прочность`, '#44ff88');
     } else {
       addLog('Нет огнестрельного оружия для починки.', 'warning');
       return;
@@ -6116,18 +7226,71 @@ function doCraft(idx) {
   } else if (recipe.result === '_stew') {
     addItem('stew', 1);
     addLog('Создано: Рагу', 'success');
+    if (typeof showLootAnimation === 'function') showLootAnimation('Рагу');
   } else if (recipe.result === '_smoked_meat') {
     addItem('smoked_meat', 2);
     addLog('Создано: Вяленое мясо ×2', 'success');
+    if (typeof showLootAnimation === 'function') showLootAnimation('Вяленое мясо ×2');
   } else if (recipe.result === '_lockpick') {
     addItem('lockpick', 1);
     addLog('Создано: Отмычка', 'success');
+    if (typeof showLootAnimation === 'function') showLootAnimation('Отмычка');
   } else if (recipe.result === '_torch') {
     addItem('torch', 1);
     addLog('Создано: Факел', 'success');
+    if (typeof showLootAnimation === 'function') showLootAnimation('Факел');
+  } else if (recipe.result === '_herbal_tea') {
+    G.player.moodles.illness = Math.max(0, (G.player.moodles.illness || 0) - 20);
+    G.player.moodles.fatigue = Math.max(0, G.player.moodles.fatigue - 15);
+    G.player.moodles.thirst = Math.max(0, G.player.moodles.thirst - 20);
+    addLog('Травяной чай выпит. Болезнь −20, усталость −15.', 'success');
+    if (typeof showNutritionFloat === 'function') showNutritionFloat('🍵 −20 болезнь  −15 усталость');
+  } else if (recipe.result === '_glass_trap') {
+    G.world.homeBaseSecurity = Math.min(10, G.world.homeBaseSecurity + 3);
+    addLog(`Стеклянная ловушка установлена! Безопасность: ${G.world.homeBaseSecurity}/10`, 'success');
+    if (typeof showStatusFloat === 'function') showStatusFloat(`🔶 Безопасность ${G.world.homeBaseSecurity}/10`, '#44ff88');
+  } else if (recipe.result === '_ammo_9x19') {
+    addItem('ammo_9x19', 5);
+    addLog('Создано: Патроны 9×19 ×5', 'success');
+    if (typeof showLootAnimation === 'function') showLootAnimation('Патроны 9×19 ×5');
+  } else if (recipe.result === '_boiled_water') {
+    // Boiled water: heals illness, provides thirst relief
+    G.player.moodles.thirst = Math.max(0, G.player.moodles.thirst - 25);
+    G.player.moodles.illness = Math.max(0, (G.player.moodles.illness || 0) - 15);
+    addLog('Кипячёная вода выпита. Жажда −25, болезнь −15.', 'success');
+    if (typeof showNutritionFloat === 'function') showNutritionFloat('💧 −25  🤒 −15');
+  } else if (recipe.result === '_armor_patch') {
+    // Armor patch: find equipped torso clothing and boost its armor
+    const torsoId = G.player.equipment?.torso;
+    if (torsoId && ITEMS[torsoId]) {
+      if (!G.player._armorBonus) G.player._armorBonus = {};
+      G.player._armorBonus[torsoId] = (G.player._armorBonus[torsoId] || 0) + 3;
+      addLog(`Заплатка установлена на ${ITEMS[torsoId].name}. Защита +3.`, 'success');
+      if (typeof showStatusFloat === 'function') showStatusFloat(`🛡 +3 защита`, '#44ff88');
+    } else {
+      addLog('Нечего укреплять — наденьте одежду на торс.', 'warning');
+      // Refund materials
+      addItem('cloth', 3); addItem('tape', 1);
+      return;
+    }
   } else {
     addItem(recipe.result, 1);
-    addLog(`Создано: ${ITEMS[recipe.result].name}`, 'success');
+    const _craftName = ITEMS[recipe.result]?.name || recipe.result;
+    addLog(`Создано: ${_craftName}`, 'success');
+    if (typeof showLootAnimation === 'function') showLootAnimation(_craftName);
+  }
+
+  // Bonus yield: skilled crafter (level 3+) has 10-30% chance for +1
+  if (recipe.skill && !recipe.result.startsWith('_')) {
+    const craftSkill = G.player.skills[recipe.skill] || 0;
+    if (craftSkill >= 3) {
+      const bonusChance = (craftSkill - 2) * 10; // 10% at 3, 20% at 4, 30% at 5
+      if (rng.chance(bonusChance)) {
+        addItem(recipe.result, 1);
+        addLog(`Мастерская работа! Бонусный предмет: +1 ${ITEMS[recipe.result]?.name || recipe.result}`, 'success');
+        if (typeof showStatusFloat === 'function') showStatusFloat(`⭐ Мастерская работа! +1`, '#ffaa00');
+      }
+    }
   }
 
   if (recipe.skill) addSkillXp(recipe.skill, 15);
@@ -6142,6 +7305,24 @@ function doCraft(idx) {
   showCrafting();
   updateUI();
   saveGame();
+}
+
+function doCraftBatch(idx, count) {
+  for (let c = 0; c < count; c++) {
+    const recipe = RECIPES[idx];
+    // Re-check availability each iteration
+    const canCraft = Object.entries(recipe.components).every(([id, qty]) => {
+      if (recipe.returnKnife && id === 'knife') return hasItem(id, 1);
+      if (recipe.keepHammer && id === 'hammer') return hasItem(id, 1);
+      if (recipe.keepAll) return hasItem(id, qty);
+      return hasItem(id, qty);
+    });
+    if (!canCraft) {
+      if (c > 0) addLog(`Скрафтено ${c} из ${count}. Ресурсы закончились.`, 'warning');
+      break;
+    }
+    doCraft(idx);
+  }
 }
 
 // ── MAP ──
@@ -6225,25 +7406,42 @@ function scanRadio() {
   if (G.radio.nextTransmission >= RADIO_TRANSMISSIONS.length) return;
 
   G.radio.charge -= 10;
-  const tx = RADIO_TRANSMISSIONS[G.radio.nextTransmission];
-  G.radio.transmissions.push(tx);
-  G.radio.nextTransmission++;
-
   const isEn = LANG?.current === 'en';
 
-  if (tx.special === 'airdrop') {
-    G.radio.airdropDiscovered = true;
-    addLog(isEn ? '📡 Supply drop coordinates received! Check the map.' : '📡 Координаты сброса получены! Проверьте карту.', 'success');
-  }
-  if (tx.special === 'npc_camp') {
-    G.radio.npcCampDiscovered = true;
-    addLog(isEn ? '📡 Survivor settlement located! Check the map.' : '📡 Поселение выживших обнаружено! Проверьте карту.', 'success');
-  }
+  // Show scanning animation
+  const scanEl = document.createElement('div');
+  scanEl.style.cssText = 'text-align:center;padding:20px;color:var(--cyan);font-size:12px;letter-spacing:.2em';
+  scanEl.innerHTML = `<div style="margin-bottom:8px;font-size:18px;animation:pulse 0.5s infinite">📡</div>СКАНИРОВАНИЕ...<div style="height:4px;background:rgba(0,229,255,.1);margin-top:8px;border-radius:2px;overflow:hidden"><div style="height:100%;background:var(--cyan);border-radius:2px;animation:scanBar 1.5s linear forwards" id="radio-scan-bar"></div></div>`;
+  // Add CSS for scanBar animation inline
+  const style = document.createElement('style');
+  style.textContent = '@keyframes scanBar{from{width:0%}to{width:100%}}';
+  document.head.appendChild(style);
+
+  const modalBody = document.getElementById('modal-body');
+  if (modalBody) { modalBody.innerHTML = ''; modalBody.appendChild(scanEl); }
 
   playSound('scan');
   addNoise(5);
-  showRadioChat(); // refresh
-  saveGame();
+
+  setTimeout(() => {
+    style.remove();
+    const tx = RADIO_TRANSMISSIONS[G.radio.nextTransmission];
+    G.radio.transmissions.push(tx);
+    G.radio.nextTransmission++;
+
+    if (tx.special === 'airdrop') {
+      G.radio.airdropDiscovered = true;
+      addLog(isEn ? '📡 Supply drop coordinates received! Check the map.' : '📡 Координаты сброса получены! Проверьте карту.', 'success');
+    }
+    if (tx.special === 'npc_camp') {
+      G.radio.npcCampDiscovered = true;
+      addLog(isEn ? '📡 Survivor settlement located! Check the map.' : '📡 Поселение выживших обнаружено! Проверьте карту.', 'success');
+    }
+    if (typeof showStatusFloat === 'function') showStatusFloat(`📡 ${isEn ? tx.speakerEn : tx.speaker}`, '#00E5FF');
+
+    showRadioChat();
+    saveGame();
+  }, 1500);
 }
 
 function showTriggerEvent(evt) {
@@ -6264,10 +7462,14 @@ function showTriggerEvent(evt) {
   // Loot from trigger
   if (evt.loot && evt.loot.length > 0) {
     html += `<div style="color:var(--green);font-size:10px;margin-bottom:6px">${isEn ? 'Found:' : 'Найдено:'}</div>`;
-    evt.loot.forEach(l => {
+    evt.loot.forEach((l, _li) => {
       addItem(l.id, l.qty);
       const def = ITEMS[l.id];
-      html += `<div style="color:var(--text-dim);font-size:10px">+ ${def?.name || l.id}${l.qty > 1 ? ' ×' + l.qty : ''}</div>`;
+      const _lName = def?.name || l.id;
+      html += `<div style="color:var(--text-dim);font-size:10px">+ ${_lName}${l.qty > 1 ? ' ×' + l.qty : ''}</div>`;
+      if (typeof showLootAnimation === 'function') {
+        setTimeout(() => showLootAnimation(_lName + (l.qty > 1 ? ' ×' + l.qty : '')), _li * 200);
+      }
     });
   }
 
@@ -6392,7 +7594,17 @@ function showMap() {
   html += `<button class="act-btn" onclick="mapCenter()" style="min-height:28px;flex:1;min-width:36px;padding:1px">${mapIconHtml('center',icsz)}</button>`;
   html += `<button class="act-btn" id="map-xray-btn" onclick="toggleMapXray()" style="min-height:28px;flex:1;min-width:36px;padding:1px${mapState.xray?';border-color:var(--cyan);background:rgba(0,229,255,.12)':''}">${mapIconHtml('xray',icsz)}</button>`;
   html += `<button class="act-btn" id="map-scout-btn" onclick="doScout()" style="min-height:28px;flex:1;min-width:36px;padding:1px;border-color:var(--cyan)">${mapIconHtml('scout',icsz)}</button>`;
+  html += `<button class="act-btn" onclick="toggleMapLegend()" style="min-height:28px;flex:0 0 28px;padding:1px;font-size:11px">?</button>`;
   html += `<button class="act-btn" id="map-go-btn" onclick="mapGo()" style="min-height:28px;flex:2;min-width:70px;display:none;padding:1px;border-color:var(--green);background:rgba(0,255,65,.15);font-size:10px">${mapIconHtml('go',icsz)} ИДТИ</button>`;
+  html += '</div>';
+
+  // Filter buttons
+  const _filters = [['medical','💊','#4488ff'],['military','🔫','#aa3322'],['food','🍖','#44aa33'],['danger','☠','#ff4444']];
+  html += '<div style="display:flex;gap:2px;margin-top:2px">';
+  _filters.forEach(([fId, fIcon, fCol]) => {
+    const active = mapState.filter === fId;
+    html += `<button class="act-btn" onclick="toggleMapFilter('${fId}')" style="flex:1;min-height:24px;padding:1px;font-size:10px;${active?`border-color:${fCol};color:${fCol};background:${fCol}22`:''}">${fIcon}</button>`;
+  });
   html += '</div>';
 
   // Scout progress bar
@@ -6458,7 +7670,26 @@ function initMapCanvas() {
   canvas.addEventListener('touchend', e => { mapPointerUp(); });
   canvas.addEventListener('wheel', e => { e.preventDefault(); mapZoom(e.deltaY < 0 ? 1 : -1); }, { passive: false });
   canvas.addEventListener('click', mapClick);
+  canvas.addEventListener('dblclick', mapDblClick);
 
+  renderMapCanvas();
+}
+
+function mapDblClick(e) {
+  // Double-click: zoom in and center on clicked point
+  const canvas = document.getElementById('map-canvas');
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  // Zoom in smoothly
+  const targetZoom = Math.min(4, mapState.zoom + 0.8);
+  // Center on clicked point
+  const cw = rect.width, ch = rect.height;
+  const dx = mx - cw / 2, dy = my - ch / 2;
+  mapState.panX -= dx * (targetZoom / mapState.zoom - 1);
+  mapState.panY -= dy * (targetZoom / mapState.zoom - 1);
+  mapState.zoom = targetZoom;
   renderMapCanvas();
 }
 
@@ -6579,9 +7810,28 @@ function updateMapInfo(node) {
   if (node.type === 'building' && node.building) {
     const catNames = { residential:'Жилое', commercial:'Коммерция', industrial:'Промышленность', government:'Гос.учреждение', civic:'Общественное' };
     const catName = catNames[meta.category] || '';
-    info += `<span style="color:var(--text-dim)">${catName}</span> · Заражение: ${node.building.infest}/5 · `;
+    const infColors = ['var(--green)','var(--green)','var(--yellow)','#ff8800','var(--red)','var(--red)'];
+    const infCol = infColors[node.building.infest] || 'var(--text-dim)';
+    info += `<span style="color:var(--text-dim)">${catName}</span> · <span style="color:${infCol}">Заражение: ${'⬤'.repeat(node.building.infest)}${'○'.repeat(5-node.building.infest)}</span> · `;
     if (node.buildingW > 1 || node.buildingH > 1) {
       info += `${node.buildingW}x${node.buildingH} · `;
+    }
+    // Detailed building info for visited buildings
+    if (node.visited && node.building.rooms) {
+      const rooms = node.building.rooms;
+      const totalRooms = rooms.length;
+      const searchedRooms = rooms.filter(r => r.containers?.every(c => c.searched)).length;
+      const hasZombies = rooms.some(r => r.zombies && r.zombies.currentHp > 0);
+      const pct = totalRooms > 0 ? Math.round(searchedRooms / totalRooms * 100) : 0;
+      const pctCol = pct >= 100 ? '#555' : pct > 50 ? 'var(--yellow)' : 'var(--green)';
+      info += `<br><span style="color:var(--text-dim)">Комнат: ${totalRooms}</span> · <span style="color:${pctCol}">Обыскано: ${pct}%</span>`;
+      if (hasZombies) info += ` · <span style="color:var(--red)">☠ Зомби!</span>`;
+      // Loot category hint
+      const lootType = node.building.type;
+      const lootHints = { pharmacy:'медикаменты', military:'оружие, патроны', police:'оружие', supermarket:'еда, расходники', warehouse:'материалы', house:'разное', office:'мелочи', clinic:'медикаменты' };
+      if (lootHints[lootType]) info += ` · <span style="color:var(--text-muted)">Лут: ${lootHints[lootType]}</span>`;
+    } else if (!node.visited) {
+      info += `<br><span style="color:var(--text-muted)">Не исследовано</span>`;
     }
   }
   if (nt.danger) {
@@ -6599,7 +7849,19 @@ function updateMapInfo(node) {
       totalMin += stepNt.time || 5;
     }
     const steps = mapState.previewPath.length - 1;
+    // Weather and time modifiers for route
+    const _w = G.weather || G.world?.weather || 'clear';
+    const _wNames = { clear:'Ясно', cloudy:'Облачно', rain:'Дождь', storm:'Шторм', snow:'Снег' };
+    const _wIcons = { clear:'☀', cloudy:'☁', rain:'🌧', storm:'⛈', snow:'❄' };
+    const _prd = typeof getTimePeriod === 'function' ? getTimePeriod() : 'day';
+    const _prdNames = { dawn:'Утро', day:'День', dusk:'Вечер', night:'Ночь' };
+    let _routeWarnings = [];
+    if (_w === 'storm' || _w === 'snow') _routeWarnings.push('замедление');
+    if (_prd === 'night') _routeWarnings.push('ночь: больше опасности');
+    if (_w === 'rain') _routeWarnings.push('дождь маскирует шум');
+    const _warnStr = _routeWarnings.length ? ` <span style="color:var(--yellow)">(${_routeWarnings.join(', ')})</span>` : '';
     info += `<br>Маршрут: ${steps} переходов · ~${totalMin} мин`;
+    info += `<br><span style="color:var(--text-dim)">${_wIcons[_w]||''} ${_wNames[_w]||_w} · ${_prdNames[_prd]||_prd}</span>${_warnStr}`;
     if (goBtn) goBtn.style.display = '';
   } else {
     info += '<br><span style="color:var(--red)">Нет доступного маршрута</span>';
@@ -6639,6 +7901,57 @@ function toggleMapXray() {
   renderMapCanvas();
 }
 
+function toggleMapFilter(fId) {
+  mapState.filter = mapState.filter === fId ? null : fId;
+  // Update button styles
+  document.querySelectorAll('#map-controls .act-btn').forEach(btn => {
+    if (btn.onclick && btn.onclick.toString().includes('toggleMapFilter')) {
+      // Reset handled by re-rendering showMap controls
+    }
+  });
+  renderMapCanvas();
+  // Re-render filter buttons
+  showMap();
+}
+
+const MAP_FILTER_TYPES = {
+  medical: ['pharmacy','clinic'],
+  military: ['military','police','fire_station'],
+  food: ['supermarket','cafe','bar'],
+  danger: null // special: infest >= 3
+};
+
+function matchesMapFilter(node) {
+  if (!mapState.filter) return true;
+  if (!node.building) return true; // non-buildings always pass
+  if (mapState.filter === 'danger') return (node.building.infest || 0) >= 3;
+  const types = MAP_FILTER_TYPES[mapState.filter];
+  return types ? types.includes(node.building.type) : true;
+}
+
+function toggleMapLegend() {
+  let leg = document.getElementById('map-legend-overlay');
+  if (leg) { leg.remove(); return; }
+  leg = document.createElement('div');
+  leg.id = 'map-legend-overlay';
+  leg.style.cssText = 'position:absolute;top:8px;right:8px;z-index:20;background:rgba(0,10,0,.92);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:9px;color:var(--text-dim);max-width:160px;backdrop-filter:blur(4px)';
+  let h = '<div style="color:var(--green);font-size:10px;margin-bottom:4px;letter-spacing:.1em">ЛЕГЕНДА</div>';
+  const cats = [['Жилое','#337744'],['Коммерция','#2266aa'],['Общественное','#5577aa'],['Гос.','#3355aa'],['Промышленное','#665533']];
+  cats.forEach(([name, col]) => {
+    h += `<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px"><div style="width:8px;height:8px;background:${col};border-radius:1px;flex-shrink:0"></div>${name}</div>`;
+  });
+  h += '<div style="margin-top:4px;border-top:1px solid var(--border);padding-top:4px">';
+  h += '<div><span style="color:#44ff88">●</span> Есть лут</div>';
+  h += '<div><span style="color:#555">●</span> Обыскано</div>';
+  h += '<div>👤 Торговец</div>';
+  h += '<div>📦 Сброс</div>';
+  h += '<div>БАЗА — ваш дом</div>';
+  h += '</div>';
+  leg.innerHTML = h;
+  const wrapper = document.getElementById('map-wrapper');
+  if (wrapper) { wrapper.style.position = 'relative'; wrapper.appendChild(leg); }
+}
+
 function renderMapCanvas() {
   const canvas = document.getElementById('map-canvas');
   if (!canvas) return;
@@ -6674,22 +7987,38 @@ function renderMapCanvas() {
     }
   }
 
-  // ── Ground fill for ALL cells (terrain under everything) ──
-  if (z >= 0.5) {
-    for (let gx = 0; gx < WORLD_CONFIG.gridW; gx++) {
-      for (let gy = 0; gy < WORLD_CONFIG.gridH; gy++) {
+  // ── Ground fill for cells (terrain under everything) ──
+  // At low zoom, draw region-level fills instead of per-cell (1600→4 rects)
+  if (z < 1.2) {
+    const _defaultCols = {suburbs:'#0e1e0a',forest:'#0e2a0e',city:'#0e100e',industrial:'#1a1508'};
+    const _regCols = WORLD_CONFIG.regions.map(r => [r.groundColor || _defaultCols[r.id] || '#0a1a0a', r.gx, r.gy, r.w, r.h]);
+    for (const [col,rx,ry,rw,rh] of _regCols) {
+      const rN={x:isoX(rx,ry),y:isoY(rx,ry)}, rE={x:isoX(rx+rw,ry),y:isoY(rx+rw,ry)};
+      const rS={x:isoX(rx+rw,ry+rh),y:isoY(rx+rw,ry+rh)}, rW={x:isoX(rx,ry+rh),y:isoY(rx,ry+rh)};
+      ctx.fillStyle=col;ctx.beginPath();ctx.moveTo(rN.x,rN.y);ctx.lineTo(rE.x,rE.y);ctx.lineTo(rS.x,rS.y);ctx.lineTo(rW.x,rW.y);ctx.closePath();ctx.fill();
+    }
+  } else if (z >= 0.5) {
+    const _ox = WORLD_CONFIG.originX || 0, _oy = WORLD_CONFIG.originY || 0;
+    for (let gx = _ox; gx < _ox + WORLD_CONFIG.gridW; gx++) {
+      for (let gy = _oy; gy < _oy + WORLD_CONFIG.gridH; gy++) {
+        // Skip empty wilderness cells (no node + outside urban area)
+        const isUrban = gx >= 0 && gx < 40 && gy >= 0 && gy < 40;
+        if (!isUrban && !nodes[`n_${gx}_${gy}`]) continue;
         const N2={x:isoX(gx,gy),y:isoY(gx,gy)};
         const S2={x:isoX(gx+1,gy+1),y:isoY(gx+1,gy+1)};
-        // Cull offscreen
         if (S2.x < -halfTW*2 || N2.x > w+halfTW*2 || N2.y > h+halfTH*2 || S2.y < -halfTH*2) continue;
         const E2={x:isoX(gx+1,gy),y:isoY(gx+1,gy)};
         const W2={x:isoX(gx,gy+1),y:isoY(gx,gy+1)};
-        // Region-based ground color (visible terrain)
+        // Region-based ground color
         let groundCol;
-        if (gx >= 20 && gy < 20) groundCol = '#0e2a0e'; // forest — green grass
-        else if (gx >= 20) groundCol = '#1a1508'; // industrial — brown dirt
-        else if (gy >= 20) groundCol = '#0e100e'; // city — dark pavement
-        else groundCol = '#0e1e0a'; // suburbs — light green
+        if (!isUrban) {
+          // Wilderness: use node type color or region color
+          const wn = nodes[`n_${gx}_${gy}`];
+          groundCol = wn ? (NODE_TYPES[wn.type]?.color || '#0a1a0a') : '#0a0a0a';
+        } else if (gx >= 20 && gy < 20) groundCol = '#0e2a0e';
+        else if (gx >= 20) groundCol = '#1a1508';
+        else if (gy >= 20) groundCol = '#0e100e';
+        else groundCol = '#0e1e0a';
         ctx.beginPath();
         ctx.moveTo(N2.x,N2.y); ctx.lineTo(E2.x,E2.y); ctx.lineTo(S2.x,S2.y); ctx.lineTo(W2.x,W2.y);
         ctx.closePath();
@@ -6715,7 +8044,9 @@ function renderMapCanvas() {
     const bcx = NPC_BASE.gx + NPC_BASE.w/2, bcy = NPC_BASE.gy + NPC_BASE.h/2;
     const bsx = isoX(bcx, bcy), bsy = isoY(bcx, bcy);
     // Check if any NPC gate is discovered
-    const npcGateDiscovered = Object.values(nodes).some(n => n.type === 'npc_gate' && n.discovered);
+    // Cache NPC gate discovery (avoid full scan every frame)
+    if (mapState._npcGateCache === undefined) mapState._npcGateCache = Object.values(nodes).some(n => n.type === 'npc_gate' && n.discovered);
+    const npcGateDiscovered = mapState._npcGateCache;
     const radioHint = G?.radio?.npcCampDiscovered;
     if (npcGateDiscovered) {
       ctx.fillStyle = 'rgba(170,170,68,0.12)';
@@ -6771,23 +8102,26 @@ function renderMapCanvas() {
     });
   }
 
-  // ── Collect visible nodes ──
-  const visNodes = Object.values(nodes).filter(n => n.discovered && !n.parentBuildingId);
-
-  // ── Separate: ground nodes vs buildings ──
-  const groundNodes = visNodes.filter(n => n.type !== 'building');
-  const buildingNodes = visNodes.filter(n => n.type === 'building');
-
-  // Sort ground by gx+gy, buildings by FAR corner (gx+bw + gy+bh) for correct painter's order
-  groundNodes.sort((a, b) => (a.gx + a.gy) - (b.gx + b.gy));
-  buildingNodes.sort((a, b) => {
-    const da = (a.gx + (a.buildingW||1)) + (a.gy + (a.buildingH||1));
-    const db = (b.gx + (b.buildingW||1)) + (b.gy + (b.buildingH||1));
-    return da - db;
-  });
+  // ── Collect visible nodes (cached — invalidate on discovery changes) ──
+  const _discCount = Object.values(nodes).reduce((c, n) => c + (n.discovered ? 1 : 0), 0);
+  if (!mapState._nodeCache || mapState._nodeCacheCount !== _discCount) {
+    const visNodes = Object.values(nodes).filter(n => n.discovered && !n.parentBuildingId);
+    mapState._groundNodes = visNodes.filter(n => n.type !== 'building');
+    mapState._buildingNodes = visNodes.filter(n => n.type === 'building');
+    mapState._groundNodes.sort((a, b) => (a.gx + a.gy) - (b.gx + b.gy));
+    mapState._buildingNodes.sort((a, b) => {
+      const da = (a.gx + (a.buildingW||1)) + (a.gy + (a.buildingH||1));
+      const db = (b.gx + (b.buildingW||1)) + (b.gy + (b.buildingH||1));
+      return da - db;
+    });
+    mapState._nodeCache = true;
+    mapState._nodeCacheCount = _discCount;
+  }
+  const groundNodes = mapState._groundNodes;
+  const buildingNodes = mapState._buildingNodes;
 
   // ── Pass 1: Draw ground tiles (road flat diamonds) ──
-  const roadSet = new Set(['road','intersection','car_wreck','bus_stop','alley','parking']);
+  const roadSet = new Set(['road','intersection','car_wreck','bus_stop','alley','parking','highway','dirt_road','bridge']);
   for (const n of groundNodes) {
     if (!roadSet.has(n.type)) continue;
     const bw = 1, bh = 1;
@@ -6796,15 +8130,18 @@ function renderMapCanvas() {
     const S = { x: isoX(n.gx+bw, n.gy+bh), y: isoY(n.gx+bw, n.gy+bh) };
     const W = { x: isoX(n.gx,    n.gy+bh), y: isoY(n.gx,    n.gy+bh) };
     const isAlley = n.type === 'alley';
+    const isHighway = n.type === 'highway';
+    const isDirt = n.type === 'dirt_road';
+    const isBridge = n.type === 'bridge';
     ctx.fillStyle = n.visited
-      ? (isAlley ? '#0e1a0e' : '#14201a')
-      : '#0a0f0a';
+      ? (isHighway ? '#1a1a10' : isDirt ? '#141008' : isBridge ? '#2a1a0a' : isAlley ? '#0e1a0e' : '#14201a')
+      : (isHighway ? '#0f0f08' : '#0a0f0a');
     ctx.beginPath();
     ctx.moveTo(N.x,N.y); ctx.lineTo(E.x,E.y); ctx.lineTo(S.x,S.y); ctx.lineTo(W.x,W.y);
     ctx.closePath(); ctx.fill();
     // Subtle edge
     if (n.visited) {
-      ctx.strokeStyle = isAlley ? 'rgba(0,255,65,0.06)' : 'rgba(0,255,65,0.09)';
+      ctx.strokeStyle = isHighway ? 'rgba(200,200,100,0.12)' : isAlley ? 'rgba(0,255,65,0.06)' : 'rgba(0,255,65,0.09)';
       ctx.lineWidth = 0.4; ctx.stroke();
     }
     // Road marking (center dashes) at high zoom
@@ -6891,11 +8228,29 @@ function renderMapCanvas() {
     }
   }
 
+  // ── Pass 2.8: Draw water tiles (river, lake) ──
+  for (const n of groundNodes) {
+    if (n.type !== 'river' && n.type !== 'lake') continue;
+    const wx = isoX(n.gx, n.gy), wy = isoY(n.gx, n.gy);
+    const wex = isoX(n.gx+1, n.gy), wey = isoY(n.gx+1, n.gy);
+    const wsx = isoX(n.gx+1, n.gy+1), wsy = isoY(n.gx+1, n.gy+1);
+    const wwx = isoX(n.gx, n.gy+1), wwy = isoY(n.gx, n.gy+1);
+    if (wsx < -halfTW*2 || wx > w+halfTW*2) continue;
+    ctx.fillStyle = n.type === 'lake' ? 'rgba(20,42,85,0.7)' : 'rgba(26,51,102,0.6)';
+    ctx.beginPath();
+    ctx.moveTo(wx,wy); ctx.lineTo(wex,wey); ctx.lineTo(wsx,wsy); ctx.lineTo(wwx,wwy);
+    ctx.closePath(); ctx.fill();
+    // Animated wave shimmer
+    const wave = 0.1 + Math.sin(Date.now() * 0.002 + n.gx * 0.5) * 0.05;
+    ctx.strokeStyle = `rgba(80,140,220,${wave})`;
+    ctx.lineWidth = 0.5; ctx.stroke();
+  }
+
   // ── Pass 3: Draw non-road ground elements (POIs) ──
   const labelsToDraw = [];
   const _poiIcons = []; // deferred to draw after buildings
   for (const n of groundNodes) {
-    if (roadSet.has(n.type)) continue; // already drawn above
+    if (roadSet.has(n.type) || n.type === 'river' || n.type === 'lake') continue; // already drawn above
     const csx = isoX(n.gx+0.5, n.gy+0.5), csy = isoY(n.gx+0.5, n.gy+0.5);
     if (csx < -halfTW*12 || csx > w+halfTW*12 || csy < -halfTH*24 || csy > h+halfTH*24) continue;
     const isHere = n.id === G.world.currentNodeId;
@@ -6993,6 +8348,24 @@ function renderMapCanvas() {
       if (z >= 1.2) labelsToDraw.push({ x:csx, y:csy+poiSz*0.6+7, label:'📦 СБРОС', isHere, color:'#ff8c00' });
     }
     ctx.globalAlpha = 1.0;
+  }
+
+  // ── Pass 3.5: Infestation heatmap glow under buildings ──
+  for (const n of buildingNodes) {
+    if (!n.visited || !n.building || (n.building.infest || 0) < 2) continue;
+    if (!matchesMapFilter(n)) continue;
+    const inf = n.building.infest;
+    const bw = n.buildingW || 1, bh = n.buildingH || 1;
+    const cx = isoX(n.gx + bw/2, n.gy + bh/2);
+    const cy = isoY(n.gx + bw/2, n.gy + bh/2);
+    const radius = Math.max(bw, bh) * halfTW * 0.6;
+    const glowColors = { 2:'0,180,0', 3:'200,200,0', 4:'220,120,0', 5:'220,40,0' };
+    const rgb = glowColors[Math.min(5, inf)] || '200,200,0';
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    grad.addColorStop(0, `rgba(${rgb},0.12)`);
+    grad.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI*2); ctx.fill();
   }
 
   // ── Pass 4: Draw 3D buildings (sorted back-to-front by far corner) ──
@@ -7104,7 +8477,12 @@ function renderMapCanvas() {
         edgeCol  = 'rgba(0,255,65,0.06)';
       }
 
-      ctx.globalAlpha = mapState.xrayLevel === 2 ? 0 : (isHere || isSelected) ? Math.max(bldOpacity, 0.7) : bldOpacity;
+      // Filter: dim non-matching buildings
+      const _matchesFilter = matchesMapFilter(n);
+      const _filterAlpha = _matchesFilter ? 1 : 0.15;
+      // Fade-in for newly discovered buildings (1.5s animation)
+      const _fadeIn = n._discoveredAt ? Math.min(1, (Date.now() - n._discoveredAt) / 1500) : 1;
+      ctx.globalAlpha = (mapState.xrayLevel === 2 ? 0 : (isHere || isSelected) ? Math.max(bldOpacity, 0.7) : bldOpacity) * _filterAlpha * _fadeIn;
 
       // Roof thickness (visible as a band between roof and walls)
       const roofThk = Math.max(1, halfTH * 0.12);
@@ -7816,6 +9194,23 @@ function renderMapCanvas() {
         ctx.fillText('БАЗА', (N.x+S.x)/2, N.y-bldH-5); ctx.shadowBlur=0;
       }
 
+      // Loot indicator dot
+      if (n.visited && n.building.rooms && z >= 1.5 && mapState.xrayLevel !== 2) {
+        const _hasUnsearched = n.building.rooms.some(r => r.containers?.some(c => !c.searched));
+        const dotR = Math.max(2, 3 * z * 0.4);
+        const dotX = (N.x + S.x) / 2 + halfTW * bw * 0.35;
+        const dotY = N.y - bldH - 2;
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, dotR, 0, Math.PI * 2);
+        if (_hasUnsearched) {
+          ctx.fillStyle = '#44ff88'; ctx.shadowColor = '#44ff88'; ctx.shadowBlur = 4;
+        } else {
+          ctx.fillStyle = '#555'; ctx.shadowBlur = 0;
+        }
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
       // Name label (with address if available) — skip in xray mode 2
       if (z >= 2 && n.visited && mapState.xrayLevel !== 2) {
         let label=(n.building.name||'').replace(/\s*#\d+/,'');
@@ -7883,11 +9278,12 @@ function renderMapCanvas() {
     ctx.restore();
   }
 
-  // ── Preview path (dashed cyan) ──
+  // ── Preview path (animated dashed cyan — ant march) ──
   if (mapState.previewPath && mapState.previewPath.length > 1) {
     ctx.strokeStyle = 'rgba(0,188,212,0.65)';
     ctx.lineWidth = Math.max(1.5, 2*z);
-    ctx.setLineDash([4,4]); ctx.lineCap='round';
+    ctx.setLineDash([6,4]); ctx.lineCap='round';
+    ctx.lineDashOffset = -(Date.now() * 0.02) % 20; // animated march
     ctx.shadowColor='#00BCD4'; ctx.shadowBlur=3;
     ctx.beginPath();
     mapState.previewPath.forEach((pid,i) => {
@@ -7895,21 +9291,32 @@ function renderMapCanvas() {
       const px=isoX(pn.gx+0.5,pn.gy+0.5), py=isoY(pn.gx+0.5,pn.gy+0.5);
       i===0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
     });
-    ctx.stroke(); ctx.setLineDash([]); ctx.shadowBlur=0;
+    ctx.stroke(); ctx.setLineDash([]); ctx.shadowBlur=0; ctx.lineDashOffset=0;
   }
 
-  // ── Active route (solid cyan) ──
+  // ── Active route (animated dashed green — ant march) ──
   if (G.world.currentRoute?.path.length > 1) {
     const route = G.world.currentRoute;
-    ctx.strokeStyle='#00E5FF'; ctx.lineWidth=Math.max(2,2.5*z);
-    ctx.lineCap='round'; ctx.shadowColor='#00E5FF'; ctx.shadowBlur=5;
+    ctx.strokeStyle='#00FF41'; ctx.lineWidth=Math.max(2,2.5*z);
+    ctx.setLineDash([8,4]); ctx.lineCap='round';
+    ctx.lineDashOffset = -(Date.now() * 0.03) % 24; // faster march for active route
+    ctx.shadowColor='#00FF41'; ctx.shadowBlur=5;
     ctx.beginPath();
     for (let i=route.currentStep; i<route.path.length; i++) {
       const pn=nodes[route.path[i]]; if (!pn) continue;
       const px=isoX(pn.gx+0.5,pn.gy+0.5), py=isoY(pn.gx+0.5,pn.gy+0.5);
       i===route.currentStep ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
     }
-    ctx.stroke(); ctx.shadowBlur=0;
+    ctx.stroke(); ctx.setLineDash([]); ctx.shadowBlur=0; ctx.lineDashOffset=0;
+    // Draw direction arrow at the endpoint
+    const lastNode = nodes[route.path[route.path.length-1]];
+    if (lastNode) {
+      const ax = isoX(lastNode.gx+0.5, lastNode.gy+0.5);
+      const ay = isoY(lastNode.gx+0.5, lastNode.gy+0.5);
+      const _destPulse = 0.5 + Math.sin(Date.now()*0.004)*0.5;
+      ctx.fillStyle = `rgba(0,255,65,${_destPulse * 0.6})`;
+      ctx.beginPath(); ctx.arc(ax, ay, 4*z, 0, Math.PI*2); ctx.fill();
+    }
   }
 
   // ── Labels (with overlap avoidance) ──
@@ -7959,6 +9366,18 @@ function renderMapCanvas() {
     drawMapIcon('player', pSX, markerY, markerSz);
     ctx.globalAlpha = 1.0;
     ctx.shadowBlur=0;
+
+    // Pulsing ring around player
+    const _ringT = (Date.now() % 2000) / 2000; // 0..1 over 2 seconds
+    const _ringR = 5 + _ringT * 20;
+    const _ringA = 0.5 * (1 - _ringT);
+    ctx.strokeStyle = '#00FF41';
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = _ringA;
+    ctx.beginPath();
+    ctx.arc(pSX, markerY + markerSz * 0.3, _ringR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
   }
 
   // ── Remote player markers (cyan) with smooth movement ──
@@ -8021,7 +9440,10 @@ function renderMapCanvas() {
   updateMoveAnim();
   if (document.getElementById('map-canvas')) {
     if (mapState.animFrame) cancelAnimationFrame(mapState.animFrame);
-    mapState.animFrame=requestAnimationFrame(renderMapCanvas);
+    // Throttle to ~30fps (skip every other frame) for performance
+    mapState.animFrame = requestAnimationFrame(() => {
+      mapState.animFrame = requestAnimationFrame(renderMapCanvas);
+    });
   }
 }
 
@@ -8052,30 +9474,57 @@ function playerDeath(cause) {
     const explored = Object.values(G.world.nodes).filter(n=>n.visited).length;
 
     let epitaph;
-    if (days <= 1) epitaph = 'Не дожил даже до заката первого дня.';
+    // Context-sensitive epitaphs based on cause and stats
+    if (cause.includes('Голод')) epitaph = 'Желудок оказался слабее воли к жизни.';
+    else if (cause.includes('Обезвоживание')) epitaph = 'Последний глоток воды был слишком давно.';
+    else if (cause.includes('Заражение')) epitaph = 'Вирус победил. Как и всех остальных.';
+    else if (cause.includes('Гипотермия')) epitaph = 'Холод забрал последнее тепло.';
+    else if (cause.includes('Тепловой')) epitaph = 'Солнце не пощадило.';
+    else if (days <= 1) epitaph = 'Не дожил даже до заката первого дня.';
     else if (days <= 3) epitaph = 'Мир пожрал ещё одну жертву.';
     else if (kills > 50) epitaph = 'Умер как жил — с оружием в руках.';
     else if (kills === 0) epitaph = 'Пацифист до самого конца.';
     else if (G.player.skills.stealth >= 5) epitaph = 'Тени не спасли от неизбежного.';
+    else if (G.player.skills.cooking >= 4) epitaph = 'Хороший повар, но плохой выживший.';
+    else if (explored > 20) epitaph = 'Исследовал мир до самого конца.';
     else if (days > 20) epitaph = 'Долгий путь закончился. Но он запомнится.';
+    else if (days > 10) epitaph = 'Десять дней — больше, чем у большинства.';
     else epitaph = 'Ещё одно имя, забытое в тишине.';
 
     let html = '<div id="death-screen" style="text-align:center">';
     html += '<div style="color:var(--red);font-size:20px;letter-spacing:.3em;margin-bottom:4px">СМЕРТЬ</div>';
     html += `<div style="color:var(--text-dim);font-size:11px;margin-bottom:16px">${G.characterName || 'Выживший'} · ${OCCUPATIONS.find(o=>o.id===G.occupation)?.name || 'Безработный'}</div>`;
 
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;text-align:left">';
-    html += `<div style="border:1px solid var(--border);padding:8px;border-radius:3px"><div style="color:var(--text-dim);font-size:9px">ДНЕЙ ПРОЖИТО</div><div style="color:var(--green);font-size:18px">${days}</div></div>`;
-    html += `<div style="border:1px solid var(--border);padding:8px;border-radius:3px"><div style="color:var(--text-dim);font-size:9px">ЗОМБИ УБИТО</div><div style="color:var(--green);font-size:18px">${kills}</div></div>`;
-    html += `<div style="border:1px solid var(--border);padding:8px;border-radius:3px"><div style="color:var(--text-dim);font-size:9px">ЛОКАЦИЙ ИССЛЕДОВАНО</div><div style="color:var(--green);font-size:18px">${explored}</div></div>`;
-    html += `<div style="border:1px solid var(--border);padding:8px;border-radius:3px"><div style="color:var(--text-dim);font-size:9px">ПРИЧИНА</div><div style="color:var(--red);font-size:11px">${cause || 'Неизвестно'}</div></div>`;
+    const crafted = G.stats.itemsCrafted || 0;
+    const maxSkill = Math.max(...Object.values(G.player.skills));
+    const bestSkillName = Object.entries(G.player.skills).sort((a,b) => b[1]-a[1])[0];
+    const loreFound = (G.loreNotes || []).length;
+
+    // Score calculation
+    const score = days * 100 + kills * 10 + explored * 25 + crafted * 5 + maxSkill * 50 + loreFound * 30;
+
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px;text-align:left">';
+    html += `<div style="border:1px solid var(--border);padding:6px;border-radius:3px"><div style="color:var(--text-dim);font-size:8px">ДНЕЙ ПРОЖИТО</div><div style="color:var(--green);font-size:16px">${days}</div></div>`;
+    html += `<div style="border:1px solid var(--border);padding:6px;border-radius:3px"><div style="color:var(--text-dim);font-size:8px">ЗОМБИ УБИТО</div><div style="color:var(--green);font-size:16px">${kills}</div></div>`;
+    html += `<div style="border:1px solid var(--border);padding:6px;border-radius:3px"><div style="color:var(--text-dim);font-size:8px">ЛОКАЦИИ</div><div style="color:var(--green);font-size:16px">${explored}</div></div>`;
+    html += `<div style="border:1px solid var(--border);padding:6px;border-radius:3px"><div style="color:var(--text-dim);font-size:8px">КРАФТ</div><div style="color:var(--cyan);font-size:16px">${crafted}</div></div>`;
+    html += `<div style="border:1px solid var(--border);padding:6px;border-radius:3px"><div style="color:var(--text-dim);font-size:8px">ЛУЧ. НАВЫК</div><div style="color:var(--cyan);font-size:12px">${bestSkillName ? bestSkillName[0] : '—'} ${maxSkill}</div></div>`;
+    html += `<div style="border:1px solid var(--border);padding:6px;border-radius:3px"><div style="color:var(--text-dim);font-size:8px">ЗАПИСКИ</div><div style="color:var(--cyan);font-size:16px">${loreFound}</div></div>`;
+    html += '</div>';
+
+    html += `<div style="border:1px solid var(--border);padding:6px;border-radius:3px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">`;
+    html += `<div><div style="color:var(--text-dim);font-size:8px">ПРИЧИНА СМЕРТИ</div><div style="color:var(--red);font-size:11px">${cause || 'Неизвестно'}</div></div>`;
+    html += `<div style="text-align:right"><div style="color:var(--text-dim);font-size:8px">ИТОГ. СЧЁТ</div><div style="color:var(--yellow);font-size:20px;font-weight:bold">${score}</div></div>`;
     html += '</div>';
 
     html += `<div style="color:var(--text-dim);font-size:11px;font-style:italic;margin-bottom:16px;padding:8px;border:1px solid var(--border);border-radius:3px">"${epitaph}"</div>`;
 
-    html += '<div style="display:flex;gap:6px">';
-    html += `<button class="act-btn" onclick="closeModal();exitToMenuDirect();setTimeout(()=>menuShowPanel('panel-newgame'),100)" style="flex:1;border-color:var(--green)">Новая игра</button>`;
-    html += `<button class="act-btn" onclick="closeModal();exitToMenuDirect()" style="flex:1">Главное меню</button>`;
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap">';
+    if (!G.difficulty.permadeath) {
+      html += `<button class="act-btn" onclick="closeModal();loadGame()" style="flex:1;min-width:80px;border-color:var(--cyan);color:var(--cyan);padding:8px">🔄 Загрузить</button>`;
+    }
+    html += `<button class="act-btn" onclick="closeModal();exitToMenuDirect();setTimeout(()=>menuShowPanel('panel-newgame'),100)" style="flex:1;min-width:80px;border-color:var(--green);padding:8px">Новая игра</button>`;
+    html += `<button class="act-btn" onclick="closeModal();exitToMenuDirect()" style="flex:1;min-width:80px;padding:8px">Меню</button>`;
     html += '</div></div>';
 
     openModal('', html);

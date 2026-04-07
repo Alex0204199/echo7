@@ -341,6 +341,8 @@ function updateRainDrops() {
 }
 
 function spawnRainDrop() {
+  // Cap active drops to prevent DOM bloat
+  if (document.querySelectorAll('.fx-raindrop').length > 15) return;
   const drop = document.createElement('div');
   drop.className = 'fx-raindrop';
   const x = Math.random() * 100;
@@ -409,7 +411,7 @@ let _xpBarTimer = null;
 function showSkillXpBar(skill, skillName) {
   const level = G.player.skills[skill] || 0;
   const xp = G.player.skillXp[skill] || 0;
-  const threshold = (level + 1) * 30;
+  const threshold = typeof getSkillThreshold === 'function' ? getSkillThreshold(level) : (level + 1) * 30;
   const pct = Math.min(100, Math.round((xp / threshold) * 100));
   const icon = _skillIcons[skill] || '⭐';
 
@@ -477,6 +479,40 @@ function showCraftAnimation(itemName) {
     el.classList.add('out');
     setTimeout(() => el.remove(), 500);
   }, 1000);
+}
+
+// ── GENERAL PURPOSE FLOAT ──
+function showGameFloat(text, opts = {}) {
+  const { color = 'var(--green)', x, y, size = 12, duration = 1000, icon = '', direction = 'up' } = opts;
+  const el = document.createElement('div');
+  const px = x ?? (window.innerWidth / 2 + (Math.random() - 0.5) * 60);
+  const py = y ?? (window.innerHeight * 0.45 + (Math.random() - 0.5) * 30);
+  const dy = direction === 'down' ? 30 : -40;
+  el.style.cssText = `position:fixed;z-index:9999;pointer-events:none;font-family:monospace;font-weight:bold;font-size:${size}px;color:${color};text-shadow:0 0 6px ${color};white-space:nowrap;left:${px}px;top:${py}px;opacity:1;transition:all ${duration * 0.8}ms ease-out;transform:translateX(-50%)`;
+  el.textContent = (icon ? icon + ' ' : '') + text;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => { el.style.transform = `translateX(-50%) translateY(${dy}px)`; el.style.opacity = '0'; });
+  setTimeout(() => el.remove(), duration);
+}
+
+// Healing float: green +HP
+function showHealFloat(amount, partName) {
+  showGameFloat(`+${amount} HP${partName ? ' ' + partName : ''}`, { color: '#44ff88', icon: '💚', size: 13 });
+}
+
+// Damage taken float: red -HP
+function showDmgTakenFloat(amount) {
+  showGameFloat(`−${amount}`, { color: '#ff4444', icon: '', size: 15, y: window.innerHeight * 0.55, direction: 'down' });
+}
+
+// Status float: yellow/orange alerts
+function showStatusFloat(text, color = '#ffcc00') {
+  showGameFloat(text, { color, icon: '', size: 11, duration: 1500 });
+}
+
+// Food/drink float
+function showNutritionFloat(text, color = '#88ff88') {
+  showGameFloat(text, { color, size: 11, duration: 1200, y: window.innerHeight * 0.6 });
 }
 
 // ── UPDATE TICK (call from advanceTime or updateUI) ──
