@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ECHO-7 Premium Effects Demo</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#b0ffb8;font-family:'Courier New',monospace;min-height:100vh;overflow-x:hidden}
+.section{padding:30px 20px;max-width:500px;margin:0 auto;border-bottom:1px solid #0d2a0d}
+.section h2{color:#00ff41;font-size:14px;letter-spacing:.3em;text-transform:uppercase;margin-bottom:16px;text-shadow:0 0 10px rgba(0,255,65,.3)}
+.section p{color:#507850;font-size:10px;margin-bottom:12px}
+
+/* ═══════════════════════════════════════════
+   1. NEON GLOW BUTTONS (animated border)
+   ═══════════════════════════════════════════ */
+.neon-btn{
+  position:relative;padding:12px 24px;background:transparent;color:#00ff41;
+  font-family:inherit;font-size:12px;letter-spacing:.15em;text-transform:uppercase;
+  border:none;cursor:pointer;overflow:hidden;
+}
+.neon-btn::before{
+  content:'';position:absolute;inset:0;border:1px solid #00ff41;border-radius:4px;
+  background:linear-gradient(135deg,rgba(0,255,65,.06),transparent);
+  transition:all .3s;
+}
+.neon-btn::after{
+  content:'';position:absolute;inset:-2px;border-radius:6px;
+  background:conic-gradient(from var(--angle,0deg),transparent 70%,#00ff41);
+  animation:neonSpin 3s linear infinite;opacity:0;transition:opacity .3s;z-index:-1;
+}
+.neon-btn:hover::after{opacity:.4}
+.neon-btn:hover::before{border-color:#00ff41;box-shadow:0 0 15px rgba(0,255,65,.3),inset 0 0 15px rgba(0,255,65,.05)}
+@property --angle{syntax:'<angle>';initial-value:0deg;inherits:false}
+@keyframes neonSpin{to{--angle:360deg}}
+
+/* ═══════════════════════════════════════════
+   2. GLITCH TEXT EFFECT
+   ═══════════════════════════════════════════ */
+.glitch{
+  position:relative;font-size:32px;font-weight:bold;color:#00ff41;
+  letter-spacing:.3em;text-shadow:0 0 10px rgba(0,255,65,.5);
+}
+.glitch::before,.glitch::after{
+  content:attr(data-text);position:absolute;top:0;left:0;width:100%;height:100%;
+}
+.glitch::before{
+  animation:glitch1 2s infinite;color:#00e5ff;z-index:-1;
+  clip-path:polygon(0 0,100% 0,100% 45%,0 45%);
+}
+.glitch::after{
+  animation:glitch2 2s infinite;color:#ff2244;z-index:-2;
+  clip-path:polygon(0 55%,100% 55%,100% 100%,0 100%);
+}
+@keyframes glitch1{0%,100%{transform:none}20%{transform:translate(-3px,-1px)}40%{transform:translate(3px,1px)}60%{transform:translate(-1px,2px)}}
+@keyframes glitch2{0%,100%{transform:none}20%{transform:translate(3px,1px)}40%{transform:translate(-3px,-1px)}60%{transform:translate(2px,-2px)}}
+
+/* ═══════════════════════════════════════════
+   3. GLASSMORPHISM CARDS
+   ═══════════════════════════════════════════ */
+.glass-card{
+  background:rgba(5,15,5,.6);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border:1px solid rgba(0,255,65,.1);border-radius:12px;padding:20px;
+  box-shadow:0 8px 32px rgba(0,0,0,.4);position:relative;overflow:hidden;
+}
+.glass-card::before{
+  content:'';position:absolute;top:-50%;left:-50%;width:200%;height:200%;
+  background:radial-gradient(circle at 30% 30%,rgba(0,255,65,.04),transparent 50%);
+  pointer-events:none;
+}
+.glass-card h3{color:#00ff41;font-size:13px;letter-spacing:.15em;margin-bottom:8px}
+.glass-card p{color:#507850;font-size:11px;line-height:1.6}
+
+/* ═══════════════════════════════════════════
+   4. ANIMATED PROGRESS BAR (HP style)
+   ═══════════════════════════════════════════ */
+.hp-bar-premium{
+  height:8px;background:rgba(255,255,255,.05);border-radius:4px;overflow:hidden;
+  position:relative;box-shadow:inset 0 1px 3px rgba(0,0,0,.3);
+}
+.hp-bar-premium .fill{
+  height:100%;border-radius:4px;position:relative;
+  background:linear-gradient(90deg,#ff2244 0%,#ffaa00 30%,#00ff41 60%,#00ff41 100%);
+  background-size:200% 100%;animation:hpShift 3s ease-in-out infinite;
+  box-shadow:0 0 8px rgba(0,255,65,.4);transition:width 1s ease;
+}
+.hp-bar-premium .fill::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(180deg,rgba(255,255,255,.15),transparent);border-radius:4px;
+}
+@keyframes hpShift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+
+/* ═══════════════════════════════════════════
+   5. RADAR PING ANIMATION
+   ═══════════════════════════════════════════ */
+.radar{
+  width:120px;height:120px;border-radius:50%;border:1px solid rgba(0,255,65,.2);
+  position:relative;background:radial-gradient(circle,rgba(0,255,65,.03),transparent);
+  margin:0 auto;
+}
+.radar::before{
+  content:'';position:absolute;top:50%;left:50%;width:100%;height:2px;
+  background:linear-gradient(90deg,transparent,#00ff41);transform-origin:left center;
+  animation:radarSweep 2s linear infinite;
+}
+.radar::after{
+  content:'';position:absolute;top:50%;left:50%;width:6px;height:6px;
+  background:#00ff41;border-radius:50%;transform:translate(-50%,-50%);
+  box-shadow:0 0 8px #00ff41;
+}
+.radar .ping{
+  position:absolute;width:8px;height:8px;background:#ff2244;border-radius:50%;
+  box-shadow:0 0 6px #ff2244;animation:pingPulse 2s ease-out infinite;
+}
+@keyframes radarSweep{to{transform:rotate(360deg)}}
+@keyframes pingPulse{0%,100%{opacity:.3;transform:scale(1)}50%{opacity:1;transform:scale(1.5)}}
+
+/* ═══════════════════════════════════════════
+   6. ANIMATED BORDER GRADIENT
+   ═══════════════════════════════════════════ */
+.gradient-border{
+  position:relative;padding:16px;border-radius:8px;
+  background:rgba(5,15,5,.9);
+}
+.gradient-border::before{
+  content:'';position:absolute;inset:-1px;border-radius:9px;z-index:-1;
+  background:conic-gradient(from var(--angle,0deg),#00ff41,#00e5ff,#ff2244,#ffe000,#00ff41);
+  animation:borderSpin 4s linear infinite;
+}
+.gradient-border::after{
+  content:'';position:absolute;inset:0;border-radius:8px;
+  background:rgba(5,15,5,.95);z-index:-1;
+}
+@keyframes borderSpin{to{--angle:360deg}}
+
+/* ═══════════════════════════════════════════
+   7. TYPEWRITER EFFECT
+   ═══════════════════════════════════════════ */
+.typewriter{
+  overflow:hidden;white-space:nowrap;border-right:2px solid #00ff41;
+  animation:typing 3s steps(30) 1s forwards,blink .7s step-end infinite;
+  width:0;font-size:13px;color:#00ff41;
+}
+@keyframes typing{from{width:0}to{width:100%}}
+@keyframes blink{50%{border-color:transparent}}
+
+/* ═══════════════════════════════════════════
+   8. FLOATING PARTICLES (pure CSS)
+   ═══════════════════════════════════════════ */
+.particles{position:relative;height:100px;overflow:hidden;border-radius:8px;background:rgba(0,10,0,.5)}
+.particle{
+  position:absolute;width:2px;height:2px;background:#00ff41;border-radius:50%;
+  box-shadow:0 0 4px #00ff41;opacity:.6;
+  animation:float 4s ease-in-out infinite;
+}
+.particle:nth-child(2){left:20%;animation-delay:.5s;animation-duration:3s}
+.particle:nth-child(3){left:40%;animation-delay:1s;animation-duration:5s}
+.particle:nth-child(4){left:60%;animation-delay:1.5s;animation-duration:3.5s}
+.particle:nth-child(5){left:80%;animation-delay:2s;animation-duration:4.5s}
+.particle:nth-child(6){left:30%;animation-delay:.3s;animation-duration:3.2s}
+.particle:nth-child(7){left:70%;animation-delay:1.2s;animation-duration:4.2s}
+.particle:nth-child(8){left:50%;animation-delay:2.3s;animation-duration:3.8s}
+@keyframes float{0%{transform:translateY(100px);opacity:0}10%{opacity:.6}90%{opacity:.6}100%{transform:translateY(-10px);opacity:0}}
+
+/* ═══════════════════════════════════════════
+   9. NOTIFICATION TOAST (slide + glow)
+   ═══════════════════════════════════════════ */
+.toast{
+  padding:12px 16px;border-left:3px solid #00ff41;border-radius:0 8px 8px 0;
+  background:linear-gradient(90deg,rgba(0,255,65,.08),rgba(5,15,5,.9));
+  backdrop-filter:blur(10px);box-shadow:0 4px 20px rgba(0,0,0,.3),0 0 15px rgba(0,255,65,.05);
+  animation:toastIn .4s cubic-bezier(.17,.67,.29,1.4);position:relative;overflow:hidden;
+}
+.toast::after{
+  content:'';position:absolute;top:0;left:0;width:100%;height:1px;
+  background:linear-gradient(90deg,#00ff41,transparent);
+}
+.toast.danger{border-left-color:#ff2244}
+.toast.danger::after{background:linear-gradient(90deg,#ff2244,transparent)}
+@keyframes toastIn{from{transform:translateX(-20px);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* ═══════════════════════════════════════════
+   10. CYBERPUNK STAT DISPLAY
+   ═══════════════════════════════════════════ */
+.stat-row{
+  display:flex;align-items:center;gap:8px;padding:8px 0;
+  border-bottom:1px solid rgba(0,255,65,.06);
+}
+.stat-label{color:#507850;font-size:10px;letter-spacing:.1em;width:80px;text-transform:uppercase}
+.stat-bar{flex:1;height:4px;background:rgba(255,255,255,.05);border-radius:2px;overflow:hidden}
+.stat-bar .fill{height:100%;border-radius:2px;transition:width .8s cubic-bezier(.4,0,.2,1)}
+.stat-bar .fill.green{background:linear-gradient(90deg,#003d0f,#00ff41);box-shadow:0 0 6px rgba(0,255,65,.3)}
+.stat-bar .fill.cyan{background:linear-gradient(90deg,#003344,#00e5ff);box-shadow:0 0 6px rgba(0,229,255,.3)}
+.stat-bar .fill.red{background:linear-gradient(90deg,#330011,#ff2244);box-shadow:0 0 6px rgba(255,34,68,.3)}
+.stat-value{color:#00ff41;font-size:11px;width:30px;text-align:right}
+
+/* ═══════════════════════════════════════════
+   11. HOLOGRAPHIC SHIMMER
+   ═══════════════════════════════════════════ */
+.holo{
+  position:relative;display:inline-block;color:#00ff41;font-size:18px;font-weight:bold;
+  letter-spacing:.2em;
+}
+.holo::before{
+  content:attr(data-text);position:absolute;inset:0;
+  background:linear-gradient(120deg,transparent 30%,rgba(0,255,65,.15) 50%,transparent 70%);
+  background-size:200% 100%;-webkit-background-clip:text;background-clip:text;
+  color:transparent;animation:shimmer 2s linear infinite;
+}
+@keyframes shimmer{to{background-position:-200% 0}}
+
+/* ═══════════════════════════════════════════
+   12. SCAN LINE LOADING
+   ═══════════════════════════════════════════ */
+.scan-loader{
+  width:100%;height:40px;background:rgba(0,10,0,.5);border:1px solid rgba(0,255,65,.1);
+  border-radius:4px;position:relative;overflow:hidden;
+}
+.scan-loader::before{
+  content:'';position:absolute;top:0;left:0;width:3px;height:100%;
+  background:linear-gradient(180deg,transparent,#00ff41,transparent);
+  animation:scanMove 1.5s ease-in-out infinite;box-shadow:0 0 10px #00ff41;
+}
+.scan-loader::after{
+  content:'SCANNING...';position:absolute;inset:0;display:flex;align-items:center;
+  justify-content:center;font-size:9px;letter-spacing:.3em;color:rgba(0,255,65,.4);
+}
+@keyframes scanMove{0%{left:0}100%{left:calc(100% - 3px)}}
+
+/* ═══════════════════════════════════════════
+   13. AMBIENT GLOW ORB
+   ═══════════════════════════════════════════ */
+.glow-orbs{position:relative;height:120px;overflow:hidden;border-radius:12px;background:#000}
+.orb{
+  position:absolute;border-radius:50%;filter:blur(40px);opacity:.3;
+  animation:orbFloat 6s ease-in-out infinite;
+}
+.orb.green{width:100px;height:100px;background:#00ff41;top:20%;left:20%}
+.orb.cyan{width:80px;height:80px;background:#00e5ff;top:40%;left:60%;animation-delay:2s}
+.orb.red{width:60px;height:60px;background:#ff2244;top:10%;left:40%;animation-delay:4s;animation-duration:8s}
+@keyframes orbFloat{0%,100%{transform:translate(0,0)}33%{transform:translate(20px,-15px)}66%{transform:translate(-15px,10px)}}
+
+/* ═══════════════════════════════════════════
+   14. TERMINAL INPUT
+   ═══════════════════════════════════════════ */
+.terminal-input{
+  display:flex;align-items:center;gap:8px;padding:10px 14px;
+  background:rgba(0,10,0,.6);border:1px solid rgba(0,255,65,.1);border-radius:6px;
+}
+.terminal-input .prompt{color:#00ff41;font-size:12px;opacity:.5}
+.terminal-input input{
+  flex:1;background:none;border:none;color:#00ff41;font-family:inherit;font-size:12px;
+  outline:none;caret-color:#00ff41;letter-spacing:.05em;
+}
+.terminal-input::after{content:'_';color:#00ff41;animation:blink .7s step-end infinite}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div style="text-align:center;padding:30px 20px">
+  <div class="glitch" data-text="ECHO-7">ECHO-7</div>
+  <div style="color:#00e5ff;font-size:10px;letter-spacing:.35em;margin-top:8px">PREMIUM EFFECTS DEMO</div>
+</div>
+
+<!-- 1. NEON BUTTONS -->
+<div class="section">
+  <h2>1. Neon Glow Buttons</h2>
+  <p>Animated rotating border glow on hover</p>
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <button class="neon-btn">Атаковать</button>
+    <button class="neon-btn" style="--neon-color:#00e5ff;color:#00e5ff">Обыск</button>
+    <button class="neon-btn" style="--neon-color:#ff2244;color:#ff2244">Бежать</button>
+  </div>
+</div>
+
+<!-- 2. GLITCH TEXT -->
+<div class="section">
+  <h2>2. Glitch Text Effect</h2>
+  <p>RGB split + distortion animation</p>
+  <div class="glitch" data-text="SIGNAL LOST" style="font-size:24px">SIGNAL LOST</div>
+</div>
+
+<!-- 3. GLASSMORPHISM -->
+<div class="section">
+  <h2>3. Glassmorphism Cards</h2>
+  <p>Frosted glass with ambient light leak</p>
+  <div class="glow-orbs" style="margin-bottom:12px;height:60px">
+    <div class="orb green"></div>
+    <div class="orb cyan"></div>
+  </div>
+  <div class="glass-card">
+    <h3>Шаркун</h3>
+    <p>HP: 35 | DMG: 8 | Speed: 1<br>Медленный, но опасный в группах</p>
+  </div>
+</div>
+
+<!-- 4. HP BAR -->
+<div class="section">
+  <h2>4. Premium HP Bar</h2>
+  <p>Gradient shift + inner highlight + glow</p>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <div><span style="font-size:9px;color:#507850">HP 85%</span><div class="hp-bar-premium"><div class="fill" style="width:85%"></div></div></div>
+    <div><span style="font-size:9px;color:#507850">HP 45%</span><div class="hp-bar-premium"><div class="fill" style="width:45%"></div></div></div>
+    <div><span style="font-size:9px;color:#507850">HP 15%</span><div class="hp-bar-premium"><div class="fill" style="width:15%"></div></div></div>
+  </div>
+</div>
+
+<!-- 5. RADAR -->
+<div class="section">
+  <h2>5. Radar Ping</h2>
+  <p>Rotating sweep with enemy blips</p>
+  <div class="radar">
+    <div class="ping" style="top:25%;left:65%"></div>
+    <div class="ping" style="top:60%;left:30%;animation-delay:.5s"></div>
+    <div class="ping" style="top:35%;left:45%;animation-delay:1.2s;background:#ffe000;box-shadow:0 0 6px #ffe000"></div>
+  </div>
+</div>
+
+<!-- 6. ANIMATED BORDER -->
+<div class="section">
+  <h2>6. Gradient Border Spin</h2>
+  <p>Conic gradient rotation around element</p>
+  <div class="gradient-border">
+    <div style="color:#00ff41;font-size:12px;text-align:center;padding:8px">
+      LEGENDARY ITEM FOUND<br>
+      <span style="color:#ffaa00;font-size:16px;font-weight:bold">AK-74</span>
+    </div>
+  </div>
+</div>
+
+<!-- 7. TYPEWRITER -->
+<div class="section">
+  <h2>7. Typewriter Effect</h2>
+  <p>Character-by-character reveal with cursor blink</p>
+  <div class="typewriter">День 1. Сирены замолчали...</div>
+</div>
+
+<!-- 8. PARTICLES -->
+<div class="section">
+  <h2>8. CSS Particles</h2>
+  <p>Pure CSS floating particle effect</p>
+  <div class="particles">
+    <div class="particle" style="left:10%"></div>
+    <div class="particle"></div>
+    <div class="particle"></div>
+    <div class="particle"></div>
+    <div class="particle"></div>
+    <div class="particle"></div>
+    <div class="particle"></div>
+    <div class="particle"></div>
+  </div>
+</div>
+
+<!-- 9. NOTIFICATIONS -->
+<div class="section">
+  <h2>9. Toast Notifications</h2>
+  <p>Slide-in with glow border and top highlight</p>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <div class="toast"><span style="font-size:11px;color:#00ff41">🏆 Достижение разблокировано!</span></div>
+    <div class="toast danger"><span style="font-size:11px;color:#ff2244">⚠ Укус! Риск заражения!</span></div>
+    <div class="toast" style="border-left-color:#00e5ff"><span style="font-size:11px;color:#00e5ff">📡 Игрок подключился</span></div>
+  </div>
+</div>
+
+<!-- 10. STAT BARS -->
+<div class="section">
+  <h2>10. Cyberpunk Stat Display</h2>
+  <p>Gradient fill bars with glow</p>
+  <div class="stat-row"><span class="stat-label">Сила</span><div class="stat-bar"><div class="fill green" style="width:75%"></div></div><span class="stat-value">7</span></div>
+  <div class="stat-row"><span class="stat-label">Скрытность</span><div class="stat-bar"><div class="fill cyan" style="width:40%"></div></div><span class="stat-value">4</span></div>
+  <div class="stat-row"><span class="stat-label">Инфекция</span><div class="stat-bar"><div class="fill red" style="width:60%"></div></div><span class="stat-value">60%</span></div>
+</div>
+
+<!-- 11. HOLOGRAPHIC -->
+<div class="section">
+  <h2>11. Holographic Shimmer</h2>
+  <p>Traveling light shimmer on text</p>
+  <div class="holo" data-text="ПРОТОКОЛ ECHO-7">ПРОТОКОЛ ECHO-7</div>
+</div>
+
+<!-- 12. SCAN LOADER -->
+<div class="section">
+  <h2>12. Scan Line Loader</h2>
+  <p>Moving scan line with glow trail</p>
+  <div class="scan-loader"></div>
+</div>
+
+<!-- 13. AMBIENT GLOW -->
+<div class="section">
+  <h2>13. Ambient Glow Orbs</h2>
+  <p>Floating blurred color orbs for background atmosphere</p>
+  <div class="glow-orbs">
+    <div class="orb green"></div>
+    <div class="orb cyan"></div>
+    <div class="orb red"></div>
+  </div>
+</div>
+
+<!-- 14. TERMINAL INPUT -->
+<div class="section">
+  <h2>14. Terminal Input</h2>
+  <p>Command-line style input with blinking cursor</p>
+  <div class="terminal-input">
+    <span class="prompt">$</span>
+    <input type="text" placeholder="Введите команду...">
+  </div>
+</div>
+
+<div style="text-align:center;padding:30px;color:#2a4a2a;font-size:9px;letter-spacing:.2em">
+  ECHO-7 PREMIUM EFFECTS &middot; 2026<br>
+  All effects are pure CSS (no JavaScript required)
+</div>
+
+</body>
+</html>

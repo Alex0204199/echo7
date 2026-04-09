@@ -327,7 +327,7 @@ const ICON_MAP = {
   _key:[6,11],
   // New crafting items
   gunpowder:[5,11], glass_shards:[5,11], herbs:[0,6], adrenaline:[3,4], herbal_tea:[8,5],
-  pipe_bomb:[1,0], glass_trap:[6,11],
+  pipe_bomb:[1,0], glass_trap:[6,11], hill:[5,1],
 };
 function itemIconStyle(id) {
   const pos = ICON_MAP[id];
@@ -465,8 +465,10 @@ const WORLD_CONFIG = {
     { id:'city',       name:'Сити-центр',      gx:0,  gy:20, w:20, h:20, scoutReq:2, riskBase:30, genType:'urban' },
     { id:'industrial', name:'Промзона',        gx:20, gy:20, w:20, h:20, scoutReq:3, riskBase:40, genType:'urban' },
     { id:'forest',     name:'Лес',             gx:20, gy:0,  w:20, h:20, scoutReq:1, riskBase:20, genType:'urban' },
-    // Second town — village to the southeast
+    // Settlements
     { id:'village',    name:'Посёлок',         gx:50, gy:50, w:20, h:20, scoutReq:4, riskBase:30, genType:'urban' },
+    { id:'fishing',    name:'Рыбацкий посёлок',gx:-25,gy:15, w:10, h:10, scoutReq:3, riskBase:20, genType:'urban' },
+    { id:'farming',    name:'Фермерский хутор',gx:15, gy:-20,w:10, h:10, scoutReq:2, riskBase:15, genType:'urban' },
     // Wilderness ring (wide)
     { id:'wild_n', name:'Северные поля',       gx:-30, gy:-30, w:100, h:30, scoutReq:2, riskBase:20, genType:'wilderness', groundColor:'#0e2a0e' },
     { id:'wild_s', name:'Южные болота',        gx:-30, gy:40,  w:100, h:30, scoutReq:3, riskBase:35, genType:'wilderness', groundColor:'#0e2218' },
@@ -501,6 +503,7 @@ const NODE_TYPES = {
   deep_forest:  { name:'Густой лес',         time:12, danger:0.15, lootTable:null,      color:'#0e2e0e', shape:'ground' },
   field:        { name:'Поле',               time:7,  danger:0.04, lootTable:null,      color:'#1e3a12', shape:'ground' },
   swamp:        { name:'Болото',             time:15, danger:0.20, lootTable:null,      color:'#142a1a', shape:'ground' },
+  hill:         { name:'Холм',               time:10, danger:0.08, lootTable:null,      color:'#2a3a1a', shape:'ground' },
 };
 
 // ═══════════════════════════════════════════
@@ -635,6 +638,7 @@ const BUILDING_META = {
   cabin:         { w:1, h:1, color:'#554422', icon:null, category:'residential' },
   ranger_station:{ w:1, h:1, color:'#446633', icon:'R', category:'government' },
   gas_station:   { w:1, h:1, color:'#aaaa33', icon:'G', category:'commercial' },
+  bunker:        { w:1, h:1, color:'#555566', icon:'B', category:'government' },
 };
 
 // Darken a hex color by factor — global for map renderer + editor
@@ -661,6 +665,8 @@ const REGION_BUILDINGS = {
   industrial: { warehouse:6, garage:4, military:1, fire_station:1, office:2, house:2, gas_station:2, factory:3 },
   forest:     { house:5, garage:3, warehouse:1, cabin:3, ranger_station:1 },
   village:    { house:8, garage:3, gas_station:1, pharmacy:1, cafe:2, church:1, shop:1, cabin:2 },
+  fishing:    { house:4, cabin:3, garage:1, cafe:1 },
+  farming:    { house:5, garage:2, cabin:1, shop:1 },
   wild_n:     { cabin:3, gas_station:2, house:2, garage:1 },
   wild_s:     { cabin:2, ranger_station:2, house:1, garage:1 },
   wild_w:     { cabin:3, ranger_station:1, house:2, garage:1 },
@@ -1071,6 +1077,16 @@ const LOCATION_TEMPLATES = {
     ]},
     hasSecondFloor: false, buildingRelW:.6, buildingRelH:.5,
   },
+  bunker: {
+    name:'Бункер', lootType:'military', baseInfest:[2,4],
+    floors: { 0: [
+      { name:'Тамбур', type:'corridor', weight:1 },
+      { name:'Оружейная', type:'room', weight:4 },
+      { name:'Радиорубка', type:'room', weight:3 },
+      { name:'Склад', type:'closet', weight:2 },
+    ]},
+    hasSecondFloor: false, buildingRelW:.5, buildingRelH:.5,
+  },
   gas_station: {
     name:'АЗС', lootType:'gas_station', baseInfest:[0,2],
     floors: { 0: [
@@ -1089,6 +1105,8 @@ const REGION_TEMPLATES = [
   { id:'industrial', name:'Промзона', scoutReq:3, locations:['warehouse','warehouse','garage','military','fire_station'], riskBase:40 },
   { id:'forest', name:'Лес', scoutReq:1, locations:['house','garage'], riskBase:20 },
   { id:'village', name:'Посёлок', scoutReq:4, locations:['house','house','garage','cafe'], riskBase:30 },
+  { id:'fishing', name:'Рыбацкий посёлок', scoutReq:3, locations:['house','cabin','cafe'], riskBase:20 },
+  { id:'farming', name:'Фермерский хутор', scoutReq:2, locations:['house','house','garage'], riskBase:15 },
 ];
 
 // ── OCCUPATIONS (PZ-inspired) ──
@@ -1234,6 +1252,19 @@ const LORE_NOTES = [
   { id:'note_scientist', title:'Лабораторный отчёт НГ-12', text:'КОНФИДЕНЦИАЛЬНО. Маркер НГ-12 успешно введён через программу вакцинации. 4200 субъектов получили нейропротектор. Контрольная группа сформирована. При активации Э-7.4 субъекты с НГ-12 сохранят когнитивные функции. Приложение: список контрольных субъектов (см. сервер уровня -5).', region:'industrial', buildingType:'office' },
   { id:'note_radio_op', title:'Бортовой журнал рации', text:'День 8. Перехват на частоте 148.625: "Борт-17, подтвердите готовность к зачистке сектора Н-47. Срок — 30 суток от момента изоляции." Ответ: "Борт-17, принято. Боеприпас: 4 термобарических." Они собираются нас бомбить. У нас 30 дней.', region:'suburbs', buildingType:'fire_station' },
   { id:'note_survivor', title:'Записка на стене', text:'ЕСЛИ ТЫ ЭТО ЧИТАЕШЬ — ТЫ ЕЩЁ ЖИВ. Не ходи на юг — там промзона, их тысячи. В лесу безопаснее, но холодно. Группа выживших на западе, в городе. Ищи стены. Удачи, брат.', region:'forest', buildingType:'house' },
+  // Wilderness lore
+  { id:'note_highway_diary', title:'Дневник водителя', text:'День 3 на шоссе. Бензин кончился у заправки, но она пуста. Видел колонну машин на обочине — все мертвы за рулём. Что-то в воздухе. Респиратор не помогает. Иду пешком на юго-восток, там якобы посёлок.', region:'wild_n', buildingType:'cabin' },
+  { id:'note_ranger', title:'Дневник лесника', text:'Странные следы на тропе. Не волк, не медведь. Человеческие, но босые и слишком глубокие — как будто бежали не оглядываясь. Нашёл одного у ручья. Он не нападал, просто стоял и смотрел. Зрачки белые. Отступил. Закрыл ставни.', region:'wild_w', buildingType:'ranger_station' },
+  { id:'note_evacuation', title:'Листовка эвакуации', text:'ГРАЖДАНСКОЕ ОПОВЕЩЕНИЕ\nЭвакуация в зону безопасности через КПП "Восток-7".\nПри себе иметь: документы, запас воды на 2 дня.\nОгнестрельное оружие ЗАПРЕЩЕНО.\nНарушители будут задержаны.\nВРЕМЯ: [зачёркнуто] ОТМЕНЕНО', region:'wild_e', buildingType:'house' },
+  { id:'note_swamp_msg', title:'Записка на бересте', text:'Тот кто это найдёт — не ходи на юг через болота. Я потерял жену и сына там. Они не утонули. Из воды поднимаются. Ночью. Идите по шоссе, обходите. Мосты ещё стоят.', region:'wild_s', buildingType:'cabin' },
+  // Lore chain: Evacuation route (3 notes across regions)
+  { id:'note_evac_1', title:'Маршрут эвакуации (1/3)', text:'Всем гражданам! Эвакуация через КПП "Восток-7" по Трассе М-4. Сбор: школа №3, пригород. Автобусы отходят каждые 2 часа. При себе: документы, вода, тёплая одежда. Оружие ЗАПРЕЩЕНО. С собой: не более 10 кг.', region:'suburbs', buildingType:'school' },
+  { id:'note_evac_2', title:'Маршрут эвакуации (2/3)', text:'КПП "Восток-7" закрыт. Военные стреляют. Мы повернули на юг к посёлку. Говорят, там стены. Автобусы не приехали. Идём пешком. Дети плачут. Ночью слышно вой с востока. Это не волки.', region:'wild_e', buildingType:'cabin' },
+  { id:'note_evac_3', title:'Маршрут эвакуации (3/3)', text:'Добрались до посёлка. Стены есть, но ворота заварены изнутри. Стучали — не открыли. Ищем обход. Осталось нас 12 из 200. Записка для тех, кто идёт за нами: обходите промзону. Через лес дольше, но живее.', region:'village', buildingType:'house' },
+  // Lore chain: Scientist's escape (3 notes)
+  { id:'note_sci_1', title:'Записки Чен (1/3)', text:'День 1. Я сбежала из лаборатории через вентиляцию. Ренков заблокировал выходы. Он знает, что я скопировала данные на флешку. НГ-12 — это не вакцина. Это маркер. Они пометили 4200 человек. Мне нужно добраться до вышки связи.', region:'industrial', buildingType:'office' },
+  { id:'note_sci_2', title:'Записки Чен (2/3)', text:'День 4. Пробираюсь через лес. Есть лесничество — переночевала. Рана на ноге воспалилась. Нашла антибиотики. Флешка цела. До вышки ещё 20 км. Видела вертолёт НейроГен — ищут меня или данные?', region:'wild_w', buildingType:'ranger_station' },
+  { id:'note_sci_3', title:'Записки Чен (3/3)', text:'День 7. Вышка связи разрушена. Кто-то взорвал генератор. Целенаправленно. Они не хотят, чтобы правда вышла наружу. Спрятала флешку [координаты затёрты]. Если вы это читаете — ищите серверы на уровне -5.', region:'wild_n', buildingType:'cabin' },
 ];
 
 // ── LORE: RADIO TRANSMISSIONS ──
@@ -1262,6 +1293,11 @@ const TRIGGER_EVENTS = [
   { id:'trig_school_refuge', type:'barricade', title:'Школьное убежище', titleEn:'School Refuge', text:'Спортзал превращён в лагерь. Матрасы на полу, детские рисунки на стенах — солнце, дома, мама и папа. Но рядом — другие рисунки: чёрные фигуры с красными ртами. Подпись детским почерком: "плохие дяди". Лагерь пуст. Одеяла сброшены. Уходили спешно.', textEn:'Gymnasium turned into a camp. Mattresses on the floor, children\'s drawings on walls — sun, houses, mom and dad. But nearby — other drawings: black figures with red mouths. Caption in child\'s handwriting: "bad men". Camp is empty. Blankets thrown aside. Left in a hurry.', region:'suburbs', buildingTypes:['school'], depressionAdd:10, loot:[{id:'water',qty:1},{id:'canned_food',qty:1}] },
   { id:'trig_military_post', type:'corpse', title:'Брошенный пост', titleEn:'Abandoned Checkpoint', text:'Армейский блокпост. Мешки с песком, колючая проволока. Два тела в форме — застрелены. Не заражёнными — пулевые в спину. Рядом — раскрытый сейф. Пустой. На земле — клочок бумаги: "Приказ отменён. Каждый сам за себя. — С.К."', textEn:'Army checkpoint. Sandbags, barbed wire. Two bodies in uniform — shot. Not by infected — bullets in the back. Nearby — an open safe. Empty. On the ground — a scrap of paper: "Order cancelled. Every man for himself. — S.K."', region:'industrial', buildingTypes:['military'], depressionAdd:7, loot:[{id:'ammo_545x39',qty:10},{id:'bandage',qty:2}] },
   { id:'trig_forest_camp', type:'corpse', title:'Лесной лагерь', titleEn:'Forest Camp', text:'Палатка, потушенный костёр, верёвка между деревьями с сушащейся одеждой. Мирная картина — если не считать тело у костра. Без видимых ран. Рядом — пустой пузырёк с этикеткой "Снотворное". Записка в кармане: "Устал бояться. Простите."', textEn:'Tent, extinguished campfire, rope between trees with drying clothes. A peaceful scene — if not for the body by the fire. No visible wounds. Nearby — an empty pill bottle labeled "Sleeping pills". A note in the pocket: "Tired of being afraid. Forgive me."', region:'forest', buildingTypes:['house'], depressionAdd:12, loot:[{id:'rope',qty:1},{id:'knife',qty:1}] },
+  // Wilderness events
+  { id:'trig_convoy_wreck', type:'corpse', title:'Разбитый конвой', titleEn:'Wrecked Convoy', text:'Три армейских грузовика, сбившихся с дороги. Один перевёрнут. Тела в форме разбросаны вокруг — пули, не зубы. Стреляли друг в друга? Или кто-то третий? В кузове последнего грузовика — ящик с нетронутыми припасами.', textEn:'Three military trucks, run off the road. One overturned. Bodies in uniform scattered around — bullets, not teeth. Shot each other? Or someone else? In the bed of the last truck — an untouched supply crate.', region:'wild_n', buildingTypes:['cabin','ranger_station','house'], depressionAdd:6, loot:[{id:'ammo_762x39',qty:8},{id:'canned_food',qty:3},{id:'bandage',qty:2}] },
+  { id:'trig_helicopter_crash', type:'blood', title:'Упавший вертолёт', titleEn:'Crashed Helicopter', text:'Обломки вертолёта среди сломанных деревьев. Хвост отломан, кабина смята. На борту — маркировка НейроГен. В салоне — контейнер с биологическим знаком опасности, замок сорван. Пусто внутри. Что бы там ни было — теперь на свободе.', textEn:'Helicopter wreckage among broken trees. Tail snapped off, cabin crushed. On the fuselage — NeuroGen markings. Inside — a container with a biohazard symbol, lock ripped off. Empty inside. Whatever was in there — is now free.', region:'wild_w', buildingTypes:['cabin','ranger_station','house'], depressionAdd:8, loot:[{id:'antibiotics',qty:2},{id:'battery',qty:3}] },
+  { id:'trig_refugee_trail', type:'warning', title:'Следы беженцев', titleEn:'Refugee Trail', text:'Вдоль тропы — брошенные вещи. Чемоданы, детские коляски, одежда. Кто-то написал мелом на камне: "ПОСЁЛОК 15 КМ НА ЮГ". Стрелка указывает на юго-восток. Рядом — пара ботинок, аккуратно поставленных у обочины. Хозяин не вернётся.', textEn:'Along the trail — abandoned belongings. Suitcases, strollers, clothing. Someone wrote in chalk on a rock: "SETTLEMENT 15 KM SOUTH". Arrow points southeast. Nearby — a pair of boots, neatly placed by the roadside. The owner won\'t return.', region:'wild_e', buildingTypes:['cabin','ranger_station','house','gas_station'], depressionAdd:5, loot:[{id:'cloth',qty:2},{id:'water',qty:1}] },
+  { id:'trig_hunters_lodge', type:'barricade', title:'Охотничья база', titleEn:'Hunter\'s Lodge', text:'Добротное строение среди деревьев. Забито досками снаружи. Внутри — порядок: карта на стене с отметками, консервы на полках, верёвка. Кто-то жил здесь организованно. На столе — записка: "Ушёл проверить ловушки. Если не вернусь до вечера — уходите без меня."', textEn:'Solid structure among trees. Boarded up from outside. Inside — order: map on wall with markings, cans on shelves, rope. Someone lived here systematically. On the table — a note: "Went to check traps. If I\'m not back by evening — leave without me."', region:'wild_s', buildingTypes:['cabin','ranger_station','house'], depressionAdd:4, loot:[{id:'canned_food',qty:2},{id:'rope',qty:1},{id:'ammo_12ga',qty:4}] },
 ];
 
 // ── STREET NAME POOLS ──
@@ -1271,6 +1307,8 @@ const STREET_NAMES = {
   industrial: ['Заводская','Монтажная','Трубная','Складская','Литейная','Промышленная','Станционная','Тракторная','Железнодорожная','Кирпичная'],
   forest:     ['Лесная','Охотничья','Грибная','Еловая','Сосновая','Озёрная','Болотная','Таёжная','Медвежья','Волчья'],
   village:    ['Деревенская','Колхозная','Молочная','Пчелиная','Цветочная','Хлебная','Мостовая','Речная','Тополиная','Рябиновая'],
+  fishing:    ['Причальная','Рыбацкая','Озёрная','Камышовая','Якорная','Лодочная','Сетевая','Чайкинская'],
+  farming:    ['Полевая','Пшеничная','Садовая','Амбарная','Сенокосная','Мельничная','Овражная','Хуторская'],
   wilderness: ['Дальняя','Глухая','Туристическая','Рыбацкая','Оленья','Старая','Забытая','Тупиковая','Просёлочная','Трасса'],
 };
 
