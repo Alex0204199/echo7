@@ -1320,10 +1320,12 @@ function generateWorld() {
     const existing = nodes[nid(gx, gy)];
     if (existing && !existing.blocked && existing.type !== 'river' && existing.type !== 'lake') {
       existing.elevation = Math.max(existing.elevation || 0, elev);
+      if (elev >= 10 && existing.type === 'deep_forest') existing.type = 'hill';
     } else if (!existing) {
       const reg = WORLD_CONFIG.regions.find(r => r.id === regId);
       if (reg && gx >= reg.gx && gx < reg.gx + reg.w && gy >= reg.gy && gy < reg.gy + reg.h) {
-        const hn = addNode(gx, gy, 'deep_forest', regId, { name: 'Возвышенность', elevation: elev });
+        const nodeType = elev >= 10 ? 'hill' : 'deep_forest';
+        const hn = addNode(gx, gy, nodeType, regId, { name: 'Возвышенность', elevation: elev });
         [[0,-1],[0,1],[-1,0],[1,0]].forEach(([dx,dy]) => { const adj = nodes[nid(gx+dx,gy+dy)]; if (adj && !adj.blocked) connect(hn.id, adj.id); });
       }
     }
@@ -1368,6 +1370,48 @@ function generateWorld() {
     }
   });
 
+  // ── GIANT MOUNTAIN in NW corner (SimCity 2000 terraced style) ──
+  {
+    const mPeakX = -20, mPeakY = -20;
+    const mRadius = 28;
+    const mPeakElev = 25;
+    const _mnoise = (x,y,s) => {
+      let h = ((x*2654435761)^(y*2246822519)^(s*3266489917))>>>0;
+      return (h % 1000) / 1000;
+    };
+    // Terrace definitions: flat plateaus with sharp drops between them
+    const terraces = [
+      { r: 4,  elev: 25 }, // peak plateau
+      { r: 8,  elev: 20 }, // drop 5
+      { r: 13, elev: 15 }, // drop 5
+      { r: 18, elev: 10 }, // drop 5
+      { r: 23, elev: 6 },  // drop 4
+      { r: 28, elev: 2 },  // drop 4, base skirt
+    ];
+    const noiseMag = 2.5; // boundary irregularity in tiles
+    for (let dx = -mRadius; dx <= mRadius; dx++) {
+      for (let dy = -mRadius; dy <= mRadius; dy++) {
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist > mRadius) continue;
+        const gx = mPeakX + dx, gy = mPeakY + dy;
+        // Irregular outer edge
+        if (dist > mRadius - 5) {
+          const edgeNoise = _mnoise(gx, gy, 7) * 4 - 2;
+          if (dist + edgeNoise > mRadius) continue;
+        }
+        // Find terrace: first (innermost) terrace whose noisy boundary contains this tile
+        let elev = 0;
+        for (let ti = 0; ti < terraces.length; ti++) {
+          const t = terraces[ti];
+          const boundaryNoise = (_mnoise(gx, gy, ti * 7 + 3) * 2 - 1) * noiseMag;
+          if (dist <= t.r + boundaryNoise) { elev = t.elev; break; }
+        }
+        if (elev <= 0) continue;
+        _setElev(gx, gy, elev, 'wild_n');
+      }
+    }
+  }
+
   // ── Villages get gentle elevation (1) if near ridges ──
   ['village','fishing','farming'].forEach(vId => {
     const vReg = WORLD_CONFIG.regions.find(r => r.id === vId);
@@ -1403,7 +1447,8 @@ function generateWorld() {
     });
   });
 
-  // ── ELEVATION SMOOTHING: Clamp-only until converged ──
+  // ── ELEVATION SMOOTHING: Clamp-only until converged (skip mountain core) ──
+  const _mtnCX = -20, _mtnCY = -20, _mtnR = 28;
   for (let pass = 0; pass < 20; pass++) {
     let changed = 0;
     Object.values(nodes).forEach(n => {
@@ -1411,6 +1456,9 @@ function generateWorld() {
       if (e === 0) return;
       if (n.type === 'river' || n.type === 'lake') { n.elevation = 0; return; }
       if (n.gx >= 0 && n.gx < 40 && n.gy >= 0 && n.gy < 40) { n.elevation = 0; return; }
+      // Skip mountain core from clamping (preserve deliberate steep slopes)
+      const _mdx = n.gx - _mtnCX, _mdy = n.gy - _mtnCY;
+      if (_mdx*_mdx + _mdy*_mdy < _mtnR*_mtnR * 0.85) return;
       let minAdj = e;
       [[0,-1],[0,1],[-1,0],[1,0]].forEach(([dx,dy]) => {
         const adj = nodes[nid(n.gx+dx, n.gy+dy)];
@@ -1421,12 +1469,14 @@ function generateWorld() {
     if (changed === 0) break;
   }
 
-  // ── FILL + CLAMP loop: ensure no jumps >1 anywhere ──
+  // ── FILL + CLAMP loop: ensure no jumps >1 anywhere (skip mountain core) ──
   for (let fpass = 0; fpass < 5; fpass++) {
-    // Fill: raise low nodes next to high ones
+    // Fill: raise low nodes next to high ones (skip mountain core — preserve terraces)
     Object.values(nodes).forEach(n => {
       if (n.type === 'river' || n.type === 'lake') return;
       if (n.gx >= 0 && n.gx < 40 && n.gy >= 0 && n.gy < 40) return;
+      const _mfx = n.gx - _mtnCX, _mfy = n.gy - _mtnCY;
+      if (_mfx*_mfx + _mfy*_mfy < _mtnR*_mtnR * 0.85) return;
       const e = n.elevation || 0;
       let maxAdj = 0;
       [[0,-1],[0,1],[-1,0],[1,0]].forEach(([dx,dy]) => {
@@ -1435,12 +1485,14 @@ function generateWorld() {
       });
       if (maxAdj - e > 1) n.elevation = maxAdj - 1;
     });
-    // Clamp: lower high nodes next to low ones
+    // Clamp: lower high nodes next to low ones (skip mountain core)
     Object.values(nodes).forEach(n => {
       const e = n.elevation || 0;
       if (e === 0) return;
       if (n.type === 'river' || n.type === 'lake') { n.elevation = 0; return; }
       if (n.gx >= 0 && n.gx < 40 && n.gy >= 0 && n.gy < 40) { n.elevation = 0; return; }
+      const _mdx2 = n.gx - _mtnCX, _mdy2 = n.gy - _mtnCY;
+      if (_mdx2*_mdx2 + _mdy2*_mdy2 < _mtnR*_mtnR * 0.85) return;
       let minAdj = e;
       [[0,-1],[0,1],[-1,0],[1,0]].forEach(([dx,dy]) => {
         const adj = nodes[nid(n.gx+dx, n.gy+dy)];
@@ -1471,11 +1523,11 @@ function generateWorld() {
         const isGate = (x === mgx + mw/2 && y === mgy) || (x === mgx + mw/2 && y === mgy + mh - 1);
         const existing = nodes[nid(x, y)];
         if (isBorder && !isGate) {
-          if (existing) { existing.type = 'barricade'; existing.name = 'Забор'; existing.blocked = true; }
-          else { const fn = addNode(x, y, 'barricade', 'wild_e', { name: 'Забор', blocked: true }); }
+          if (existing) { existing.type = 'npc_wall'; existing.name = 'Забор базы'; existing.blocked = true; }
+          else { addNode(x, y, 'npc_wall', 'wild_e', { name: 'Забор базы', blocked: true }); }
         } else if (isGate) {
-          if (existing) { existing.type = 'road'; existing.name = 'КПП'; existing.blocked = false; }
-          else { addNode(x, y, 'road', 'wild_e', { name: 'КПП' }); }
+          if (existing) { existing.type = 'npc_gate'; existing.name = 'КПП'; existing.blocked = false; }
+          else { addNode(x, y, 'npc_gate', 'wild_e', { name: 'КПП' }); }
         } else {
           if (!existing) addNode(x, y, 'road', 'wild_e', { name: 'Военная база' });
         }
@@ -1803,6 +1855,42 @@ function generateWorld() {
       n.elevation = Math.min(maxRoadElev, adjElevs[Math.floor(adjElevs.length / 2)]); // capped median
     } else if (adjElevs.length === 1) {
       n.elevation = Math.min(maxRoadElev, adjElevs[0]);
+    }
+  });
+
+  // ── FIX BUILDING/POI ELEVATION: Inherit from adjacent terrain ──
+  Object.values(nodes).forEach(n => {
+    if ((n.elevation || 0) > 0) return; // already has elevation
+    if (n.gx >= 0 && n.gx < 40 && n.gy >= 0 && n.gy < 40) return; // urban stays 0
+    if (n.type === 'river' || n.type === 'lake') return;
+    // Buildings, car_wrecks, bus_stops, gas_stations: take max of adjacent node elevations
+    const needsFix = n.type === 'building' || n.type === 'car_wreck' || n.type === 'bus_stop' || n.type === 'gas_station' || n.type === 'forest_clearing' || n.type === 'park';
+    if (!needsFix) return;
+    let maxAdj = 0;
+    [[0,-1],[0,1],[-1,0],[1,0]].forEach(([dx,dy]) => {
+      const adj = nodes[nid(n.gx+dx, n.gy+dy)];
+      if (adj) maxAdj = Math.max(maxAdj, adj.elevation || 0);
+    });
+    n.elevation = maxAdj;
+  });
+
+  // ── RULE: Buildings only on flat surfaces (not ramps) ──
+  // A tile is flat if all 4 per-corner MAX elevations are equal
+  const _ge2 = (x,y) => nodes[nid(x,y)]?.elevation || 0;
+  Object.values(nodes).forEach(n => {
+    if (n.type !== 'building' || !n.building) return;
+    if (n.gx >= 0 && n.gx < 40 && n.gy >= 0 && n.gy < 40) return; // urban always flat
+    const ce = n.elevation || 0;
+    const eN = Math.max(_ge2(n.gx-1,n.gy-1),_ge2(n.gx,n.gy-1),_ge2(n.gx-1,n.gy),ce);
+    const eE = Math.max(_ge2(n.gx,n.gy-1),_ge2(n.gx+1,n.gy-1),ce,_ge2(n.gx+1,n.gy));
+    const eS = Math.max(ce,_ge2(n.gx+1,n.gy),_ge2(n.gx,n.gy+1),_ge2(n.gx+1,n.gy+1));
+    const eW = Math.max(_ge2(n.gx-1,n.gy),ce,_ge2(n.gx-1,n.gy+1),_ge2(n.gx,n.gy+1));
+    const isFlat = (eN === eE && eE === eS && eS === eW);
+    if (!isFlat) {
+      // Convert building back to terrain
+      n.type = n.elevation >= 2 ? 'deep_forest' : 'field';
+      n.name = NODE_TYPES[n.type]?.name || 'Terrain';
+      n.building = null; n.buildingW = 0; n.buildingH = 0;
     }
   });
 
@@ -3598,9 +3686,11 @@ function startCrowbarMinigame(difficulty, targetName, duration) {
     <button class="act-btn" onclick="cancelCrowbar()" style="width:100%;margin-top:6px;border-color:#661122;color:var(--red)">Отмена</button>
   </div>`;
   openModal('Взлом монтировкой', html);
-  document.getElementById('modal-close').style.display = 'none';
+  const _mcBtn = document.getElementById('modal-close');
+  if (_mcBtn) _mcBtn.style.display = 'none';
 
   const canvas = document.getElementById('crowbar-canvas');
+  if (!canvas) return;
   canvas.addEventListener('click', crowbarHit);
   const ctx = canvas.getContext('2d');
 
@@ -3764,9 +3854,11 @@ function startLockpickMinigame(difficulty, targetName) {
     <button class="act-btn" onclick="cancelLockpick()" style="width:100%;margin-top:6px;border-color:#661122;color:var(--red)">Отмена</button>
   </div>`;
   openModal('Взлом отмычкой', html);
-  document.getElementById('modal-close').style.display = 'none';
+  const _mcBtn2 = document.getElementById('modal-close');
+  if (_mcBtn2) _mcBtn2.style.display = 'none';
 
   const canvas = document.getElementById('lockpick-canvas');
+  if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
   G._lockpick = {
@@ -4017,7 +4109,7 @@ function startTimedAction(label, durationSec, callback) {
     <button class="act-btn" onclick="cancelTimedAction()" style="margin-top:10px;width:100%;border-color:#661122;color:var(--red)">Отмена</button>
   </div>`;
   openModal('', html);
-  document.getElementById('modal-close').style.display = 'none';
+  { const _mc = document.getElementById('modal-close'); if (_mc) _mc.style.display = 'none'; }
 }
 
 function updateActionProgress() {
@@ -5157,7 +5249,7 @@ function showCombatUI() {
   }
 
   openModal('⚔ БОЙ', html);
-  document.getElementById('modal-close').style.display = 'none';
+  { const _mc = document.getElementById('modal-close'); if (_mc) _mc.style.display = 'none'; }
 
   // Auto-refresh UI every 500ms for cooldown updates
   if (G.combatState && !G.combatState._uiTimer) {
@@ -8525,7 +8617,7 @@ function renderMapCanvas() {
 
   // ── Ground fill for cells (terrain under everything) ──
   const _cachedSeason = typeof getCurrentSeason === 'function' ? getCurrentSeason() : 'summer'; // cache once per frame
-  if (z < 1.2) {
+  if (z < 0.35) {
     const _defaultCols = {suburbs:'#0e1e0a',forest:'#0e2a0e',city:'#0e100e',industrial:'#1a1508'};
     const _regCols = WORLD_CONFIG.regions.map(r => [r.groundColor || _defaultCols[r.id] || '#0a1a0a', r.gx, r.gy, r.w, r.h]);
     for (const [col,rx,ry,rw,rh] of _regCols) {
@@ -8533,7 +8625,7 @@ function renderMapCanvas() {
       const rS={x:isoX(rx+rw,ry+rh),y:isoY(rx+rw,ry+rh)}, rW={x:isoX(rx,ry+rh),y:isoY(rx,ry+rh)};
       ctx.fillStyle=col;ctx.beginPath();ctx.moveTo(rN.x,rN.y);ctx.lineTo(rE.x,rE.y);ctx.lineTo(rS.x,rS.y);ctx.lineTo(rW.x,rW.y);ctx.closePath();ctx.fill();
     }
-  } else if (z >= 0.5) {
+  } else if (z >= 0.35) {
     const _ox = WORLD_CONFIG.originX || 0, _oy = WORLD_CONFIG.originY || 0;
     for (let gx = _ox; gx < _ox + WORLD_CONFIG.gridW; gx++) {
       for (let gy = _oy; gy < _oy + WORLD_CONFIG.gridH; gy++) {
@@ -8569,9 +8661,23 @@ function renderMapCanvas() {
           else if (_cachedSeason === 'autumn' && wn && wn.type === 'field') groundCol = '#2a2a08';
           else if (_cachedSeason === 'spring' && wn && wn.type === 'field') groundCol = '#1a3a12';
           else groundCol = _baseCol;
-          // Elevation-based color: higher = slightly lighter/grayer (rocky highlands)
-          if (_ce >= 3) groundCol = typeof scaleColor === 'function' ? scaleColor(groundCol, 1.3) : groundCol;
-          else if (_ce >= 2) groundCol = typeof scaleColor === 'function' ? scaleColor(groundCol, 1.15) : groundCol;
+          // Elevation-based terrain color tiers (SimCity 2000 sandy/tan palette)
+          if (_ce >= 20) {
+            const _sv = ((gx*7 + gy*13) & 15);
+            groundCol = _sv < 4 ? '#ccc098' : _sv < 8 ? '#d8cca8' : _sv < 12 ? '#c4b890' : '#ddd0b0';
+          } else if (_ce >= 15) {
+            const _sv = ((gx*11 + gy*7) & 7);
+            groundCol = _sv < 3 ? '#baa878' : _sv < 6 ? '#c4b488' : '#b09868';
+          } else if (_ce >= 10) {
+            const _sv = ((gx*13 + gy*17) & 7);
+            groundCol = _sv < 2 ? '#8a7a52' : _sv < 5 ? '#9a8a60' : '#7a6a48';
+          } else if (_ce >= 6) {
+            const _sv = ((gx*17 + gy*11) & 7);
+            groundCol = _sv < 3 ? '#5a6a3a' : _sv < 6 ? '#4a5a2a' : '#506030';
+          } else if (_ce >= 3) {
+            const _sv = ((gx*19 + gy*23) & 7);
+            groundCol = _sv < 3 ? '#2a3a1a' : _sv < 6 ? '#3a4a2a' : '#344428';
+          } else if (_ce >= 2) groundCol = typeof scaleColor === 'function' ? scaleColor(groundCol, 1.1) : groundCol;
         } else if (gx >= 20 && gy < 20) groundCol = '#0e2a0e';
         else if (gx >= 20) groundCol = '#1a1508';
         else if (gy >= 20) groundCol = '#0e100e';
@@ -8580,26 +8686,64 @@ function renderMapCanvas() {
         ctx.moveTo(N2.x,N2.y); ctx.lineTo(E2.x,E2.y); ctx.lineTo(S2.x,S2.y); ctx.lineTo(W2.x,W2.y);
         ctx.closePath();
         ctx.fillStyle = groundCol; ctx.fill();
-        // Slope side fills: draw where elevated edge hangs over lower ground
-        if (!isUrban && z >= 0.7 && (_eW > 0 || _eS > 0 || _eE > 0)) {
-          // Left face (W→S edge): ground below = level 0 base
+        // Slope side fills: cliff faces with elevation-aware coloring
+        if (!isUrban && z >= 0.35 && (_eW > 0 || _eS > 0 || _eE > 0)) {
           const _baseW = isoY(gx, gy+1);
           const _baseS = isoY(gx+1, gy+1);
+          const _cliffDrop = Math.max(_eW, _eS) - Math.min(_eW, _eS, _eN, _eE);
+          // Left cliff face (south-west facing = darker, shadowed)
           if (W2.y < _baseW || S2.y < _baseS) {
-            ctx.fillStyle = typeof scaleColor === 'function' ? scaleColor(groundCol, 0.35) : '#040e04';
+            const _cliffH = Math.max(_baseW - W2.y, _baseS - S2.y);
+            const _cliffCol = _ce >= 20 ? '#8a7a58' : _ce >= 15 ? '#6a5a38' : _ce >= 10 ? '#4a3a22' : _ce >= 6 ? '#2a3a18' : typeof scaleColor === 'function' ? scaleColor(groundCol, 0.3) : '#040e04';
+            ctx.fillStyle = _cliffCol;
             ctx.beginPath();
             ctx.moveTo(W2.x, W2.y); ctx.lineTo(S2.x, S2.y);
             ctx.lineTo(S2.x, _baseS); ctx.lineTo(W2.x, _baseW);
             ctx.closePath(); ctx.fill();
+            // Rock strata lines on cliffs (visible at any zoom for tall drops)
+            if (_cliffH > _hPL * 1.5 && z >= 0.5) {
+              const _strataCount = Math.min(6, Math.floor(_cliffH / (_hPL * 0.7)));
+              for (let _si = 1; _si <= _strataCount; _si++) {
+                const _sf = _si / (_strataCount + 1);
+                const _sy1 = W2.y + ((_baseW - W2.y) * _sf);
+                const _sy2 = S2.y + ((_baseS - S2.y) * _sf);
+                // Alternate light/dark strata
+                ctx.strokeStyle = _si % 2 === 0 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.12)';
+                ctx.lineWidth = z >= 1.5 ? 0.8 : 0.4;
+                ctx.beginPath(); ctx.moveTo(W2.x, _sy1); ctx.lineTo(S2.x, _sy2); ctx.stroke();
+              }
+              // Vertical crack lines on very tall cliffs
+              if (_cliffH > _hPL * 4 && z >= 1.0) {
+                ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 0.3;
+                const _cx = W2.x + (S2.x - W2.x) * 0.35;
+                ctx.beginPath(); ctx.moveTo(_cx, W2.y + _cliffH*0.1); ctx.lineTo(_cx, _baseW - _cliffH*0.1); ctx.stroke();
+                const _cx2 = W2.x + (S2.x - W2.x) * 0.7;
+                ctx.beginPath(); ctx.moveTo(_cx2, S2.y + _cliffH*0.2); ctx.lineTo(_cx2, _baseS - _cliffH*0.15); ctx.stroke();
+              }
+            }
           }
-          // Right face (E→S edge)
+          // Right cliff face (south-east facing = lighter)
           const _baseE = isoY(gx+1, gy);
           if (E2.y < _baseE || S2.y < _baseS) {
-            ctx.fillStyle = typeof scaleColor === 'function' ? scaleColor(groundCol, 0.5) : '#081808';
+            const _cliffHR = Math.max(_baseE - E2.y, _baseS - S2.y);
+            const _cliffColR = _ce >= 20 ? '#a08a60' : _ce >= 15 ? '#7a6a48' : _ce >= 10 ? '#5a4a30' : _ce >= 6 ? '#3a4a28' : typeof scaleColor === 'function' ? scaleColor(groundCol, 0.45) : '#081808';
+            ctx.fillStyle = _cliffColR;
             ctx.beginPath();
             ctx.moveTo(E2.x, E2.y); ctx.lineTo(S2.x, S2.y);
             ctx.lineTo(S2.x, _baseS); ctx.lineTo(E2.x, _baseE);
             ctx.closePath(); ctx.fill();
+            // Right-side strata
+            if (_cliffHR > _hPL * 1.5 && z >= 0.5) {
+              const _strataR = Math.min(6, Math.floor(_cliffHR / (_hPL * 0.7)));
+              for (let _si = 1; _si <= _strataR; _si++) {
+                const _sf = _si / (_strataR + 1);
+                const _sy1 = E2.y + ((_baseE - E2.y) * _sf);
+                const _sy2 = S2.y + ((_baseS - S2.y) * _sf);
+                ctx.strokeStyle = _si % 2 === 0 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.08)';
+                ctx.lineWidth = z >= 1.5 ? 0.6 : 0.3;
+                ctx.beginPath(); ctx.moveTo(E2.x, _sy1); ctx.lineTo(S2.x, _sy2); ctx.stroke();
+              }
+            }
           }
         }
         // Grid stroke: only for urban cells (wilderness = seamless)
@@ -8700,68 +8844,58 @@ function renderMapCanvas() {
   const groundNodes = mapState._groundNodes;
   const buildingNodes = mapState._buildingNodes;
 
-  // ── Pass 1: Road tile diamonds (SKIPPED — connection lines + ground fill handle roads) ──
+  // Road type set (used by Pass 2 connections + water/POI skip logic)
   const roadSet = new Set(['road','intersection','car_wreck','bus_stop','alley','parking','highway','dirt_road','bridge','forest_trail']);
-  for (const n of groundNodes) {
-    if (true) continue; // Skip road tile rendering — connection lines are sufficient
-    const bw = 1, bh = 1;
-    // Road tiles: flat at node's own elevation (matches connection lines)
-    const _rOff = (n.elevation || 0) * halfTH * 0.6;
-    const N = { x: isoX(n.gx,    n.gy),    y: isoY(n.gx,    n.gy) - _rOff };
-    const E = { x: isoX(n.gx+bw, n.gy),    y: isoY(n.gx+bw, n.gy) - _rOff };
-    const S = { x: isoX(n.gx+bw, n.gy+bh), y: isoY(n.gx+bw, n.gy+bh) - _rOff };
-    const W = { x: isoX(n.gx,    n.gy+bh), y: isoY(n.gx,    n.gy+bh) - _rOff };
-    const isAlley = n.type === 'alley';
-    const isHighway = n.type === 'highway';
-    const isDirt = n.type === 'dirt_road';
-    const isBridge = n.type === 'bridge';
-    ctx.fillStyle = n.visited
-      ? (isHighway ? '#1a1a10' : isDirt ? '#141008' : isBridge ? '#2a1a0a' : isAlley ? '#0e1a0e' : '#14201a')
-      : (isHighway ? '#0f0f08' : '#0a0f0a');
-    ctx.beginPath();
-    ctx.moveTo(N.x,N.y); ctx.lineTo(E.x,E.y); ctx.lineTo(S.x,S.y); ctx.lineTo(W.x,W.y);
-    ctx.closePath(); ctx.fill();
-    // Highway: wider edge + yellow center marking
-    if (isHighway && n.visited) {
-      ctx.strokeStyle = 'rgba(200,200,100,0.18)'; ctx.lineWidth = Math.max(0.8, z * 0.4); ctx.stroke();
-      if (z >= 1.8) { // Yellow center dashes
-        ctx.strokeStyle = 'rgba(200,180,50,0.2)'; ctx.lineWidth = 0.4; ctx.setLineDash([2,3]);
-        const cx=(N.x+S.x)/2, cy=(N.y+S.y)/2;
-        ctx.beginPath(); ctx.moveTo((N.x+E.x)/2,(N.y+E.y)/2); ctx.lineTo((S.x+W.x)/2,(S.y+W.y)/2); ctx.stroke();
-        ctx.setLineDash([]);
+
+  // ── Pass 1.5: 3D terrain objects on wilderness tiles ──
+  if (z >= 2.2) {
+    const _hPLobj = halfTH * 0.6;
+    let _objCount = 0;
+    for (let _gi = 0; _gi < groundNodes.length && _objCount < 300; _gi += (z < 3 ? 3 : 2)) {
+      const wn = groundNodes[_gi];
+      if (!wn || (wn.gx >= 0 && wn.gx < 40 && wn.gy >= 0 && wn.gy < 40)) continue;
+      const cx = isoX(wn.gx+0.5, wn.gy+0.5);
+      const cy = isoY(wn.gx+0.5, wn.gy+0.5) - (wn.elevation||0) * _hPLobj;
+      if (cx < -40 || cx > w+40 || cy < -60 || cy > h+40) continue;
+      _objCount++;
+      const sz = halfTW * 0.3;
+      if (wn.type === 'deep_forest') {
+        // No trees on cliff edges: skip if any neighbor has different elevation
+        const _we = wn.elevation || 0;
+        if (_we >= 5) {
+          let _tFlat = true;
+          for (const [_tdx,_tdy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+            const _ta = nodes[`n_${wn.gx+_tdx}_${wn.gy+_tdy}`];
+            if (!_ta || (_ta.elevation || 0) !== _we) { _tFlat = false; break; }
+          }
+          if (!_tFlat) continue;
+        }
+        const th = sz * 2.5;
+        ctx.fillStyle = '#3a2a10'; ctx.fillRect(cx-1, cy-th*0.3, 2, th*0.3);
+        for (let i = 0; i < 3; i++) {
+          const ly = cy-th*0.3-i*(th*0.2), lr = sz*(0.8-i*0.15);
+          ctx.fillStyle = i===0?'#0a4a0a':'#086808';
+          ctx.beginPath(); ctx.moveTo(cx,ly-th*0.22); ctx.lineTo(cx+lr,ly); ctx.lineTo(cx,ly+lr*0.2); ctx.closePath(); ctx.fill();
+          ctx.fillStyle = i===0?'#063a06':'#044a04';
+          ctx.beginPath(); ctx.moveTo(cx,ly-th*0.22); ctx.lineTo(cx-lr,ly); ctx.lineTo(cx,ly+lr*0.2); ctx.closePath(); ctx.fill();
+        }
+      } else if (wn.type === 'swamp' && z >= 2.5) {
+        ctx.fillStyle = 'rgba(15,50,35,0.4)';
+        ctx.beginPath(); ctx.ellipse(cx, cy, sz*0.8, sz*0.3, 0, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = '#4a6a2a'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(cx-sz*0.3, cy); ctx.lineTo(cx-sz*0.3-1, cy-sz); ctx.stroke();
+        ctx.fillStyle = '#6a4a1a';
+        ctx.beginPath(); ctx.ellipse(cx-sz*0.3-1, cy-sz-2, 1.5, 3, 0, 0, Math.PI*2); ctx.fill();
+      } else if (wn.type === 'field' && z >= 2.5) {
+        ctx.strokeStyle = 'rgba(60,120,40,0.4)'; ctx.lineWidth = 0.8;
+        for (let i = 0; i < 3; i++) {
+          const gox = cx+(i-1)*sz*0.5, goy = cy+(i%2-0.5)*sz*0.2;
+          ctx.beginPath(); ctx.moveTo(gox,goy); ctx.lineTo(gox-1,goy-sz*0.4); ctx.stroke();
+        }
       }
-    }
-    // Bridge: deck planks + railing lines
-    else if (isBridge && n.visited && z >= 2.5) {
-      ctx.strokeStyle = 'rgba(100,70,30,0.3)'; ctx.lineWidth = 0.3;
-      for (let p = 0.2; p <= 0.8; p += 0.2) {
-        const px1 = N.x+(E.x-N.x)*p, py1 = N.y+(E.y-N.y)*p;
-        const px2 = W.x+(S.x-W.x)*p, py2 = W.y+(S.y-W.y)*p;
-        ctx.beginPath(); ctx.moveTo(px1,py1); ctx.lineTo(px2,py2); ctx.stroke();
-      }
-      ctx.strokeStyle = 'rgba(140,100,50,0.25)'; ctx.lineWidth = 0.6;
-      ctx.beginPath(); ctx.moveTo(N.x,N.y); ctx.lineTo(E.x,E.y); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(W.x,W.y); ctx.lineTo(S.x,S.y); ctx.stroke();
-    }
-    // Other road edges
-    else if (n.visited) {
-      ctx.strokeStyle = isAlley ? 'rgba(0,255,65,0.06)' : 'rgba(0,255,65,0.09)';
-      ctx.lineWidth = 0.4; ctx.stroke();
-    }
-    // Road marking (center dashes) at high zoom
-    if (z >= 3 && n.visited && n.type === 'road') {
-      ctx.strokeStyle = 'rgba(80,80,0,0.18)';
-      ctx.lineWidth = 0.6;
-      const cx = (N.x+S.x)/2, cy = (N.y+S.y)/2;
-      ctx.beginPath(); ctx.moveTo(cx-3,cy); ctx.lineTo(cx+3,cy); ctx.stroke();
-    }
-    // Forest trail: thin dashed green line
-    if (n.type === 'forest_trail' && n.visited && z >= 2.5) {
-      ctx.strokeStyle = 'rgba(0,180,40,0.2)'; ctx.lineWidth = 0.3; ctx.setLineDash([2,3]);
-      ctx.beginPath(); ctx.moveTo((N.x+E.x)/2,(N.y+E.y)/2); ctx.lineTo((S.x+W.x)/2,(S.y+W.y)/2); ctx.stroke();
-      ctx.setLineDash([]);
     }
   }
+
 
   // ── Pass 2: Draw road connections ──
   const drawnEdges = new Set();
@@ -8890,14 +9024,15 @@ function renderMapCanvas() {
 
     // NPC base walls and gates
     if (n.type === 'npc_wall') {
-      // Thin rectangular wall — detect orientation from position on perimeter
-      const base = typeof NPC_BASE !== 'undefined' ? NPC_BASE : {gx:7,gy:27,w:6,h:6};
-      const isTopEdge = n.gy === base.gy;
-      const isBottomEdge = n.gy === base.gy + base.h - 1;
-      const isLeftEdge = n.gx === base.gx;
-      const isRightEdge = n.gx === base.gx + base.w - 1;
-      const isHorizontal = isTopEdge || isBottomEdge;
-      const isCorner = (isTopEdge || isBottomEdge) && (isLeftEdge || isRightEdge);
+      // Detect wall orientation from adjacent wall nodes (works for any base)
+      const _hasWallAt = (x,y) => { const adj = nodes[`n_${x}_${y}`]; return adj && adj.type === 'npc_wall'; };
+      const wallLeft = _hasWallAt(n.gx-1, n.gy);
+      const wallRight = _hasWallAt(n.gx+1, n.gy);
+      const wallUp = _hasWallAt(n.gx, n.gy-1);
+      const wallDown = _hasWallAt(n.gx, n.gy+1);
+      const isHorizontal = wallLeft || wallRight;
+      const isVertical = wallUp || wallDown;
+      const isCorner = isHorizontal && isVertical;
 
       // Thin wall: 0.25 thickness across, full length along the edge
       const thick = 0.25; // wall thickness in grid units
@@ -8905,15 +9040,15 @@ function renderMapCanvas() {
       let x0, y0, x1, y1; // grid coords of the thin wall rectangle
 
       if (isCorner) {
-        // Corner post — small square
-        x0 = n.gx + 0.3; y0 = n.gy + 0.3; x1 = n.gx + 0.7; y1 = n.gy + 0.7;
-      } else if (isTopEdge || isBottomEdge) {
+        // Corner post — fills full tile for seamless connection
+        x0 = n.gx; y0 = n.gy; x1 = n.gx + 1; y1 = n.gy + 1;
+      } else if (isHorizontal && !isVertical) {
         // Horizontal wall — full width, thin depth
-        const cy = isTopEdge ? n.gy + 0.5 - thick/2 : n.gy + 0.5 - thick/2;
+        const cy = n.gy + 0.5 - thick/2;
         x0 = n.gx; y0 = cy; x1 = n.gx + 1; y1 = cy + thick;
       } else {
         // Vertical wall — thin width, full depth
-        const cx = isLeftEdge ? n.gx + 0.5 - thick/2 : n.gx + 0.5 - thick/2;
+        const cx = n.gx + 0.5 - thick/2;
         x0 = cx; y0 = n.gy; x1 = cx + thick; y1 = n.gy + 1;
       }
 
@@ -8959,14 +9094,44 @@ function renderMapCanvas() {
     ctx.globalAlpha = poiAlpha;
     // POI icons deferred to draw AFTER buildings (so they're not hidden)
     if (n.type === 'car_wreck') {
-      _poiIcons.push({ icon:'car_wreck', x:csx, y:csy, sz:poiSz*1.3, searched:n.searched, isHere });
+      // Draw car wreck as emoji icon instead of sprite
+      const _cwSz = Math.max(10, 14*z);
+      ctx.font = `${_cwSz}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = n.searched ? 'rgba(100,50,50,0.6)' : 'rgba(200,80,60,0.8)';
+      ctx.fillText('🚗', csx, csy - 2);
+      // X mark if not searched
+      if (!n.searched) {
+        ctx.strokeStyle = '#cc3344'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(csx-4,csy-6); ctx.lineTo(csx+4,csy+2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(csx+4,csy-6); ctx.lineTo(csx-4,csy+2); ctx.stroke();
+      }
       if (z >= 1.5) labelsToDraw.push({ x:csx, y:csy+poiSz*0.6+7, label: n.searched ? 'Авария ✓' : 'Авария', isHere, color: n.searched ? '#553333' : '#cc3344' });
     } else if (n.type === 'park') {
       _poiIcons.push({ icon:'park', x:csx, y:csy, sz:poiSz });
     } else if (n.type === 'forest_clearing') {
       _poiIcons.push({ icon:'forest_clearing', x:csx, y:csy, sz:poiSz });
     } else if (n.type === 'barricade') {
-      _poiIcons.push({ icon:'barricade', x:csx, y:csy, sz:poiSz });
+      // 3D fence/barricade
+      const _fH = Math.max(6, 10*z);
+      const _fW = poiSz * 0.6;
+      // Left wall
+      ctx.fillStyle = '#5a4a30';
+      ctx.beginPath();
+      ctx.moveTo(csx-_fW, csy); ctx.lineTo(csx, csy+_fW*0.4);
+      ctx.lineTo(csx, csy+_fW*0.4-_fH); ctx.lineTo(csx-_fW, csy-_fH);
+      ctx.closePath(); ctx.fill();
+      // Right wall
+      ctx.fillStyle = '#3a2a18';
+      ctx.beginPath();
+      ctx.moveTo(csx, csy+_fW*0.4); ctx.lineTo(csx+_fW, csy);
+      ctx.lineTo(csx+_fW, csy-_fH); ctx.lineTo(csx, csy+_fW*0.4-_fH);
+      ctx.closePath(); ctx.fill();
+      // Top
+      ctx.fillStyle = '#7a6a50';
+      ctx.beginPath();
+      ctx.moveTo(csx, csy-_fH-_fW*0.3); ctx.lineTo(csx+_fW, csy-_fH);
+      ctx.lineTo(csx, csy+_fW*0.4-_fH); ctx.lineTo(csx-_fW, csy-_fH);
+      ctx.closePath(); ctx.fill();
       if (n.blocked && z >= 1.8) labelsToDraw.push({ x:csx, y:csy+poiSz*0.6+7, label:'Заблокировано', isHere, color:'#aa8800' });
     } else if (n.type === 'forest_trail') {
       _poiIcons.push({ icon:'forest_trail', x:csx, y:csy, sz:poiSz*0.7 });
@@ -10059,14 +10224,6 @@ function renderMapCanvas() {
   }
 }
 
-function mapTravelTo(ri, li) {
-  // Legacy fallback — unused in node system
-}
-
-function renderMiniMap() {
-  // Handled by renderMapCanvas now
-}
-
 // ── DEATH ──
 function playerDeath(cause) {
   G.player.alive = false;
@@ -10140,7 +10297,7 @@ function playerDeath(cause) {
     html += '</div></div>';
 
     openModal('', html);
-    document.getElementById('modal-close').style.display = 'none';
+    { const _mc = document.getElementById('modal-close'); if (_mc) _mc.style.display = 'none'; }
 
     const epitaphEl = document.querySelector('#death-screen [style*="italic"]');
     if (epitaphEl) {
@@ -10302,6 +10459,7 @@ function loadGame() {
     transitionScene();
     return true;
   } catch (e) {
+    console.error('loadGame failed:', e);
     return false;
   }
 }
