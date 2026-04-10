@@ -856,9 +856,11 @@ function toggleEmoteMenu() {
   menu = document.createElement('div');
   menu.id = 'emote-menu';
   menu.style.cssText = 'position:fixed;bottom:110px;left:50%;transform:translateX(-50%);z-index:2000;display:flex;flex-wrap:wrap;gap:4px;justify-content:center;max-width:320px;background:rgba(0,10,0,.95);border:1px solid var(--cyan);padding:8px;border-radius:8px';
+  let html = '';
   EMOTES.forEach(e => {
-    menu.innerHTML += `<button onclick="sendEmote('${e.id}')" style="padding:6px 10px;background:rgba(0,229,255,.05);border:1px solid rgba(0,229,255,.2);border-radius:4px;color:var(--text);font-family:monospace;font-size:12px;cursor:pointer" title="${e.label}">${e.icon} ${e.label}</button>`;
+    html += `<button onclick="sendEmote('${e.id}')" style="padding:6px 10px;background:rgba(0,229,255,.05);border:1px solid rgba(0,229,255,.2);border-radius:4px;color:var(--text);font-family:monospace;font-size:12px;cursor:pointer" title="${e.label}">${e.icon} ${e.label}</button>`;
   });
+  menu.innerHTML = html;
   document.body.appendChild(menu);
   // Auto-close after 5s
   setTimeout(() => { const m = document.getElementById('emote-menu'); if (m) m.remove(); }, 5000);
