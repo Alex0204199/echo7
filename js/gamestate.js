@@ -168,6 +168,8 @@ function newGame(charData) {
         setTimeout(() => { const p = document.getElementById('gen-progress'); if (p) p.remove(); }, 350);
         progOverlay.removeEventListener('click', dismissOverlay);
         progOverlay.removeEventListener('touchstart', dismissOverlay);
+        // Trigger multiplayer connect after overlay dismissed
+        if (window._pendingMPConnect) { window._pendingMPConnect(); window._pendingMPConnect = null; }
       };
       progOverlay.addEventListener('click', dismissOverlay);
       progOverlay.addEventListener('touchstart', dismissOverlay);
@@ -240,19 +242,28 @@ function newGame(charData) {
   transitionScene();
   saveGame();
 
-  // ── Multiplayer: after world gen, handle host or join ──
-  if (window._pendingHost) {
-    window._pendingHost = false;
-    _showNetOverlay('📡 Подключение к серверу...');
-    // One-shot listeners (remove after first fire)
-    const _onReady = () => { Bus._h['net:host_ready'] = (Bus._h['net:host_ready']||[]).filter(f=>f!==_onReady); _removeNetOverlay(); showHostLobby(); };
-    const _onErr = (e) => { Bus._h['net:error'] = (Bus._h['net:error']||[]).filter(f=>f!==_onErr); _showNetOverlay('⚠ ' + e.error, true); };
-    Bus.on('net:host_ready', _onReady);
-    Bus.on('net:error', _onErr);
-    Net.hostGame(G.characterName || 'Host');
-  } else if (window._pendingJoin) {
-    window._pendingJoin = false;
-    showJoinCodeInput();
+  // ── Multiplayer: deferred until "МИР ГОТОВ" overlay is dismissed ──
+  if (window._pendingHost || window._pendingJoin) {
+    const _doConnect = () => {
+      if (window._pendingHost) {
+        window._pendingHost = false;
+        _showNetOverlay('📡 Подключение к серверу...');
+        const _onReady = () => { Bus._h['net:host_ready'] = (Bus._h['net:host_ready']||[]).filter(f=>f!==_onReady); _removeNetOverlay(); showHostLobby(); };
+        const _onErr = (e) => { Bus._h['net:error'] = (Bus._h['net:error']||[]).filter(f=>f!==_onErr); _showNetOverlay('⚠ ' + e.error, true); };
+        Bus.on('net:host_ready', _onReady);
+        Bus.on('net:error', _onErr);
+        Net.hostGame(G.characterName || 'Host');
+      } else if (window._pendingJoin) {
+        window._pendingJoin = false;
+        showJoinCodeInput();
+      }
+    };
+    // If progress overlay exists, defer connect until it's dismissed
+    if (document.getElementById('gen-progress')) {
+      window._pendingMPConnect = _doConnect;
+    } else {
+      _doConnect();
+    }
   }
 }
 
