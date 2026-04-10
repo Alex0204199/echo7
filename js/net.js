@@ -64,11 +64,31 @@ const Net = {
     this.roomCode = this._genCode();
     this.localId = 'host';
     this.mode = 'HOST';
+    this._hostAttempt = 0;
+    this._hostPlayerName = playerName;
+    this._hostConnect();
+  },
+
+  _hostConnect() {
+    const playerName = this._hostPlayerName;
+    this._hostAttempt++;
+    const attempt = this._hostAttempt;
+    const maxAttempts = 3;
+
+    if (this.ws) { try { this.ws.close(); } catch(e) {} this.ws = null; }
+
+    Bus.emit('net:host_status', { text: attempt > 1 ? `📡 Попытка ${attempt}/${maxAttempts}... Сервер просыпается` : '📡 Подключение к серверу...' });
 
     this.ws = new WebSocket(RELAY_SERVER);
     this._hostTimeout = setTimeout(() => {
-      Bus.emit('net:error', { error: 'Сервер не отвечает (15с). Попробуйте ещё раз — сервер просыпается.' });
-      this.disconnect();
+      clearTimeout(this._hostTimeout);
+      if (this.ws) { try { this.ws.close(); } catch(e) {} this.ws = null; }
+      if (attempt < maxAttempts) {
+        this._hostConnect();
+      } else {
+        Bus.emit('net:error', { error: 'Сервер не отвечает. Попробуйте через 30 секунд — сервер просыпается.', canRetry: true });
+        this.mode = 'OFFLINE';
+      }
     }, 15000);
     this.ws.onopen = () => {
       this.ws.send(JSON.stringify({ t: 'host', code: this.roomCode, name: playerName }));
@@ -89,8 +109,16 @@ const Net = {
       if (msg.t === 'leave') this._onPlayerDisconnect(msg.id);
       if (msg.t === 'error') Bus.emit('net:error', { error: msg.error });
     };
-    this.ws.onerror = () => { clearTimeout(this._hostTimeout); Bus.emit('net:error', { error: 'Ошибка WebSocket' }); };
-    this.ws.onclose = () => { clearTimeout(this._hostTimeout); if (this.mode === 'HOST') { this.mode = 'OFFLINE'; } };
+    this.ws.onerror = () => {
+      clearTimeout(this._hostTimeout);
+      if (attempt < maxAttempts) {
+        this._hostConnect();
+      } else {
+        Bus.emit('net:error', { error: 'Ошибка WebSocket. Проверьте интернет-соединение.', canRetry: true });
+        this.mode = 'OFFLINE';
+      }
+    };
+    this.ws.onclose = () => { clearTimeout(this._hostTimeout); if (this.mode === 'HOST' && !this._hostAttempt) { this.mode = 'OFFLINE'; } };
   },
 
   // ── CLIENT ──

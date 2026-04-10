@@ -248,10 +248,13 @@ function newGame(charData) {
       if (window._pendingHost) {
         window._pendingHost = false;
         _showNetOverlay('📡 Подключение к серверу...');
-        const _onReady = () => { Bus._h['net:host_ready'] = (Bus._h['net:host_ready']||[]).filter(f=>f!==_onReady); _removeNetOverlay(); showHostLobby(); };
-        const _onErr = (e) => { Bus._h['net:error'] = (Bus._h['net:error']||[]).filter(f=>f!==_onErr); _showNetOverlay('⚠ ' + e.error, true); };
+        const _cleanup = () => { Bus._h['net:host_ready'] = (Bus._h['net:host_ready']||[]).filter(f=>f!==_onReady); Bus._h['net:error'] = (Bus._h['net:error']||[]).filter(f=>f!==_onErr); Bus._h['net:host_status'] = (Bus._h['net:host_status']||[]).filter(f=>f!==_onStatus); };
+        const _onReady = () => { _cleanup(); _removeNetOverlay(); showHostLobby(); };
+        const _onErr = (e) => { _cleanup(); _showNetOverlay('⚠ ' + e.error, true, e.canRetry ? () => { _showNetOverlay('📡 Подключение к серверу...'); Bus.on('net:host_ready', _onReady); Bus.on('net:error', _onErr); Bus.on('net:host_status', _onStatus); Net.hostGame(G.characterName || 'Host'); } : null); };
+        const _onStatus = (e) => { _showNetOverlay(e.text); };
         Bus.on('net:host_ready', _onReady);
         Bus.on('net:error', _onErr);
+        Bus.on('net:host_status', _onStatus);
         Net.hostGame(G.characterName || 'Host');
       } else if (window._pendingJoin) {
         window._pendingJoin = false;
@@ -267,7 +270,7 @@ function newGame(charData) {
   }
 }
 
-function _showNetOverlay(text, isError) {
+function _showNetOverlay(text, isError, retryFn) {
   let el = document.getElementById('net-overlay');
   if (!el) {
     el = document.createElement('div');
@@ -277,7 +280,13 @@ function _showNetOverlay(text, isError) {
   }
   if (isError) {
     el.style.borderColor = 'var(--red)';
-    el.innerHTML = `<div style="color:var(--red);font-size:11px">${text}</div><button onclick="document.getElementById('net-overlay')?.remove();Net.disconnect()" style="margin-top:8px;padding:6px 16px;border:1px solid var(--red);background:none;color:var(--red);font-family:monospace;cursor:pointer">Закрыть</button>`;
+    let html = `<div style="color:var(--red);font-size:11px">${text}</div><div style="display:flex;gap:6px;margin-top:10px;justify-content:center">`;
+    if (retryFn) {
+      window._netRetryFn = retryFn;
+      html += `<button onclick="if(window._netRetryFn)window._netRetryFn();window._netRetryFn=null" style="padding:6px 16px;border:1px solid var(--cyan);background:none;color:var(--cyan);font-family:monospace;cursor:pointer">Повторить</button>`;
+    }
+    html += `<button onclick="document.getElementById('net-overlay')?.remove();Net.disconnect()" style="padding:6px 16px;border:1px solid var(--red);background:none;color:var(--red);font-family:monospace;cursor:pointer">Закрыть</button></div>`;
+    el.innerHTML = html;
   } else {
     el.style.borderColor = 'var(--cyan)';
     el.innerHTML = `<div style="color:var(--cyan);font-size:12px">${text}</div>`;
