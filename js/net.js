@@ -4,6 +4,9 @@
 
 const RELAY_SERVER = 'wss://echo7-signal.onrender.com';
 
+// ── Wake up relay server on page load (Render free tier sleeps after 15min) ──
+fetch('https://echo7-signal.onrender.com', { mode: 'no-cors' }).catch(() => {});
+
 // ── Session persistence ──
 function saveMPSession(data) {
   try {
@@ -63,12 +66,17 @@ const Net = {
     this.mode = 'HOST';
 
     this.ws = new WebSocket(RELAY_SERVER);
+    this._hostTimeout = setTimeout(() => {
+      Bus.emit('net:error', { error: 'Сервер не отвечает (15с). Попробуйте ещё раз — сервер просыпается.' });
+      this.disconnect();
+    }, 15000);
     this.ws.onopen = () => {
       this.ws.send(JSON.stringify({ t: 'host', code: this.roomCode, name: playerName }));
     };
     this.ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
       if (msg.t === 'hosted') {
+        clearTimeout(this._hostTimeout);
         this.players[this.localId] = { name: playerName, nodeId: null, roomIdx: -1, x: 0, y: 0, dir: 2 };
         this._timeSyncInterval = setInterval(() => this._broadcastTime(), 5000);
         this._worldSyncInterval = setInterval(() => this._broadcastWorldDelta(), 30000);
@@ -81,8 +89,8 @@ const Net = {
       if (msg.t === 'leave') this._onPlayerDisconnect(msg.id);
       if (msg.t === 'error') Bus.emit('net:error', { error: msg.error });
     };
-    this.ws.onerror = () => Bus.emit('net:error', { error: 'Ошибка WebSocket' });
-    this.ws.onclose = () => { if (this.mode === 'HOST') { this.mode = 'OFFLINE'; } };
+    this.ws.onerror = () => { clearTimeout(this._hostTimeout); Bus.emit('net:error', { error: 'Ошибка WebSocket' }); };
+    this.ws.onclose = () => { clearTimeout(this._hostTimeout); if (this.mode === 'HOST') { this.mode = 'OFFLINE'; } };
   },
 
   // ── CLIENT ──
@@ -783,6 +791,7 @@ const Net = {
     this._intentionalDisconnect = true;
     this._reconnectAttempts = 0;
     clearTimeout(this._connectTimeout);
+    clearTimeout(this._hostTimeout);
     clearInterval(this._timeSyncInterval);
     clearInterval(this._worldSyncInterval);
     clearInterval(this._pingInterval);
