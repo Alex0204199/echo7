@@ -169,6 +169,7 @@ function newGame(charData) {
         progOverlay.removeEventListener('click', dismissOverlay);
         progOverlay.removeEventListener('touchstart', dismissOverlay);
         // Trigger multiplayer connect after overlay dismissed
+        console.log('[MP] 4. dismissOverlay → _pendingMPConnect=' + typeof window._pendingMPConnect);
         if (window._pendingMPConnect) { window._pendingMPConnect(); window._pendingMPConnect = null; }
       };
       progOverlay.addEventListener('click', dismissOverlay);
@@ -243,8 +244,10 @@ function newGame(charData) {
   saveGame();
 
   // ── Multiplayer: deferred until "МИР ГОТОВ" overlay is dismissed ──
+  console.log('[MP] 2. newGame end → _pendingHost=' + window._pendingHost + ' _pendingJoin=' + window._pendingJoin);
   if (window._pendingHost || window._pendingJoin) {
     const _doConnect = () => {
+      console.log('[MP] 5. _doConnect() → _pendingHost=' + window._pendingHost);
       if (window._pendingHost) {
         window._pendingHost = false;
         _showNetOverlay('📡 Подключение к серверу...');
@@ -262,7 +265,9 @@ function newGame(charData) {
       }
     };
     // If progress overlay exists, defer connect until it's dismissed
-    if (document.getElementById('gen-progress')) {
+    const _hasOverlay = !!document.getElementById('gen-progress');
+    console.log('[MP] 3. gen-progress exists=' + _hasOverlay + ' → ' + (_hasOverlay ? 'DEFERRED' : 'IMMEDIATE'));
+    if (_hasOverlay) {
       window._pendingMPConnect = _doConnect;
     } else {
       _doConnect();

@@ -151,6 +151,7 @@ function menuContinue() {
 }
 
 function menuHostGame() {
+  console.log('[MP] 1. menuHostGame() → _pendingHost=true');
   window._pendingHost = true;
   window._pendingJoin = false;
   // Show mode selector for host

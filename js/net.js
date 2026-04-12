@@ -61,6 +61,7 @@ const Net = {
 
   // ── HOST ──
   hostGame(playerName) {
+    console.log('[MP] 6. Net.hostGame("' + playerName + '")');
     this.roomCode = this._genCode();
     this.localId = 'host';
     this.mode = 'HOST';
@@ -74,6 +75,7 @@ const Net = {
     this._hostAttempt++;
     const attempt = this._hostAttempt;
     const maxAttempts = 3;
+    console.log('[MP] 7. _hostConnect attempt=' + attempt + '/' + maxAttempts);
 
     if (this.ws) { try { this.ws.close(); } catch(e) {} this.ws = null; }
 
@@ -81,6 +83,7 @@ const Net = {
 
     this.ws = new WebSocket(RELAY_SERVER);
     this._hostTimeout = setTimeout(() => {
+      console.log('[MP] TIMEOUT attempt=' + attempt);
       clearTimeout(this._hostTimeout);
       if (this.ws) { try { this.ws.close(); } catch(e) {} this.ws = null; }
       if (attempt < maxAttempts) {
@@ -91,12 +94,15 @@ const Net = {
       }
     }, 15000);
     this.ws.onopen = () => {
+      console.log('[MP] 8. WebSocket OPEN → sending host msg');
       this.ws.send(JSON.stringify({ t: 'host', code: this.roomCode, name: playerName }));
     };
     this.ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
+      console.log('[MP] 9. WebSocket MSG: ' + msg.t);
       if (msg.t === 'hosted') {
         clearTimeout(this._hostTimeout);
+        console.log('[MP] 10. HOSTED! roomCode=' + this.roomCode + ' → showHostLobby');
         this.players[this.localId] = { name: playerName, nodeId: null, roomIdx: -1, x: 0, y: 0, dir: 2 };
         this._timeSyncInterval = setInterval(() => this._broadcastTime(), 5000);
         this._worldSyncInterval = setInterval(() => this._broadcastWorldDelta(), 30000);
@@ -109,7 +115,8 @@ const Net = {
       if (msg.t === 'leave') this._onPlayerDisconnect(msg.id);
       if (msg.t === 'error') Bus.emit('net:error', { error: msg.error });
     };
-    this.ws.onerror = () => {
+    this.ws.onerror = (ev) => {
+      console.log('[MP] WebSocket ERROR', ev);
       clearTimeout(this._hostTimeout);
       if (attempt < maxAttempts) {
         this._hostConnect();
