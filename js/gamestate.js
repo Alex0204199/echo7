@@ -10345,7 +10345,12 @@ function saveGame() {
   G.world.exploredLocations = explArr;
   const json = JSON.stringify(G);
   G.world.exploredLocations = new Set(explArr);
-  localStorage.setItem('echo7_save', json);
+  try {
+    localStorage.setItem('echo7_save', json);
+  } catch (e) {
+    console.warn('[SAVE] localStorage quota exceeded, clearing old data and retrying');
+    try { localStorage.removeItem('echo7_save'); localStorage.setItem('echo7_save', json); } catch (e2) { console.error('[SAVE] Still cannot save:', e2.message); }
+  }
 }
 
 function _showSaveIndicator() {

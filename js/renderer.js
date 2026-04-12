@@ -401,7 +401,7 @@ function emitSoundPulse(roomIdx, intensity, color) {
 
 function resizeCanvas() {
   const wrap = document.getElementById('canvas-wrap');
-  if (!wrap) return;
+  if (!wrap || !canvas) return;
   canvas.width = wrap.clientWidth * window.devicePixelRatio;
   canvas.height = wrap.clientHeight * window.devicePixelRatio;
   canvas.style.width = wrap.clientWidth + 'px';
